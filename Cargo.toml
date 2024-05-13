@@ -1,0 +1,16 @@
+[package]
+name = "red_hot"
+version = "0.1.0"
+edition.workspace = true
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+[workspace]
+members = ["examples/*"]
+
+[workspace.package]
+edition = "2021"
+
+[workspace.dependencies]
+red_hot = { path = "." }

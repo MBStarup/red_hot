@@ -1,0 +1,23 @@
+#!/bin/sh
+
+# Snapshot before formatting for diff
+before=$(git stash create)
+if [ -z "$before" ]; then
+    before=$(git write-tree)
+fi
+
+cargo +nightly fmt --all
+
+if ! git diff --quiet "$before" -- '*.rs'; then
+    echo ""
+    echo "Your changes were not formatted, nothing has been comitted."
+    echo "Please review the formatting changes and re-commit."
+    echo "=== Automatically Applied ormatting Changes ==="
+    git diff "$before" -- '*.rs'
+    echo "========================================================"
+    git add -u -- '*.rs'
+    echo ""
+    echo "The above formatting changes have been staged."
+    echo "Run 'git commit' again to commit them."
+    exit 1
+fi
