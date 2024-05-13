@@ -5,3 +5,4 @@ edition.workspace = true
 
 [dependencies]
 red_hot = { workspace = true }
+winit = { workspace = true }
