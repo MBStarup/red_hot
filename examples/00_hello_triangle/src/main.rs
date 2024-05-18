@@ -36,7 +36,9 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let renderer = Renderer::<Vertex>::new(&window, window_width, window_height);
+    let mut renderer = Renderer::<Vertex>::new(&window, window_width, window_height);
+    renderer.set_vertex_shader(&include_bytes!("./shader/vert.spv")[..]);
+    renderer.set_fragment_shader(&include_bytes!("./shader/frag.spv")[..]);
 
     let mut should_close = false;
     while !should_close {

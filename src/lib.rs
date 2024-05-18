@@ -3,8 +3,8 @@ pub mod renderer {
         extensions::khr::{Surface, Swapchain},
         util::read_spv,
         vk::{
-            self, AttachmentReference, CommandBuffer, Fence, Framebuffer, PhysicalDevice, PhysicalDeviceMemoryProperties, Queue, Rect2D, Semaphore, SubpassDependency, SurfaceFormatKHR, SurfaceKHR,
-            SwapchainKHR,
+            self, AttachmentReference, CommandBuffer, Fence, Framebuffer, PhysicalDevice, PhysicalDeviceMemoryProperties, Queue, Rect2D, Semaphore, ShaderModule, SubpassDependency, SurfaceFormatKHR,
+            SurfaceKHR, SwapchainKHR,
         },
         Entry,
     };
@@ -48,6 +48,8 @@ pub mod renderer {
 
         //? Things we need to clean?
         framebuffers: Vec<Framebuffer>,
+        vertex_shader_module: Option<ShaderModule>,
+        fragment_shader_module: Option<ShaderModule>,
     }
 
     impl<Vertex> Renderer<Vertex>
@@ -376,7 +378,37 @@ pub mod renderer {
                     draw_commands_reuse_fence,
                     draw_command_buffer,
                     dependencies,
+                    vertex_shader_module: None,   //. No shaders by default, use other function to add these for now
+                    fragment_shader_module: None, //. No shaders by default, use other function to add these for now
                 }
+            }
+        }
+
+        pub fn set_vertex_shader(&mut self, shader_bytes: &[u8]) {
+            // TODO: Clean up old shaders if not None
+            unsafe {
+                self.vertex_shader_module = Some(
+                    self.device
+                        .create_shader_module(
+                            &vk::ShaderModuleCreateInfo::builder().code(&read_spv(&mut Cursor::new(shader_bytes)).expect("Failed to read vertex shader spv file")), // TODO: fix
+                            None,
+                        )
+                        .expect("Vertex shader module error"),
+                );
+            }
+        }
+
+        pub fn set_fragment_shader(&mut self, shader_bytes: &[u8]) {
+            // TODO: Clean up old shaders if not None
+            unsafe {
+                self.fragment_shader_module = Some(
+                    self.device
+                        .create_shader_module(
+                            &vk::ShaderModuleCreateInfo::builder().code(&read_spv(&mut Cursor::new(shader_bytes)).expect("Failed to read fragment shader spv file")), // TODO: fix
+                            None,
+                        )
+                        .expect("Fragment shader module error"),
+                );
             }
         }
 
@@ -533,28 +565,14 @@ pub mod renderer {
                             &[vk::GraphicsPipelineCreateInfo::builder()
                                 .stages(&[
                                     vk::PipelineShaderStageCreateInfo {
-                                        module: self
-                                            .device
-                                            .create_shader_module(
-                                                &vk::ShaderModuleCreateInfo::builder()
-                                                    .code(&read_spv(&mut Cursor::new(&include_bytes!("./shader/vert.spv")[..])).expect("Failed to read vertex shader spv file")), // TODO: fix
-                                                None,
-                                            )
-                                            .expect("Vertex shader module error"),
+                                        module: self.vertex_shader_module.expect("Vertex shader should be set, before rendering begins"),
                                         p_name: CStr::from_bytes_with_nul_unchecked(b"main\0").as_ptr(),
                                         stage: vk::ShaderStageFlags::VERTEX,
                                         ..Default::default()
                                     },
                                     vk::PipelineShaderStageCreateInfo {
                                         s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
-                                        module: self
-                                            .device
-                                            .create_shader_module(
-                                                &vk::ShaderModuleCreateInfo::builder()
-                                                    .code(&read_spv(&mut Cursor::new(&include_bytes!("./shader/frag.spv")[..])).expect("Failed to read fragment shader spv file")), // TODO: fix
-                                                None,
-                                            )
-                                            .expect("Fragment shader module error"),
+                                        module: self.fragment_shader_module.expect("Fragment shader should be set, before rendering begins"),
                                         p_name: CStr::from_bytes_with_nul_unchecked(b"main\0").as_ptr(),
                                         stage: vk::ShaderStageFlags::FRAGMENT,
                                         ..Default::default()
@@ -697,6 +715,14 @@ pub mod renderer {
                 self.device.device_wait_idle().unwrap();
                 for framebuffer in &self.framebuffers {
                     self.device.destroy_framebuffer(*framebuffer, None);
+                }
+                match self.vertex_shader_module {
+                    Some(vertex_shader_module) => self.device.destroy_shader_module(vertex_shader_module, None),
+                    None => {},
+                }
+                match self.fragment_shader_module {
+                    Some(fragment_shader_module) => self.device.destroy_shader_module(fragment_shader_module, None),
+                    None => {},
                 }
             }
         }
