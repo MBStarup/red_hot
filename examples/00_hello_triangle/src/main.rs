@@ -20,6 +20,12 @@ fn main() {
         color: [f32; 4],
     }
 
+    #[derive(Clone, Copy)]
+    #[repr(C)]
+    struct Uniform {
+        fake: u8,
+    }
+
     let triangle = Mesh::<Vertex> {
         vertices: vec![
             Vertex { pos: [0.0, -0.5, 0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
@@ -40,6 +46,8 @@ fn main() {
     renderer.set_vertex_shader(&include_bytes!("./shader/vert.spv")[..]);
     renderer.set_fragment_shader(&include_bytes!("./shader/frag.spv")[..]);
 
+    let uniform = Uniform { fake: 0 }; //. Fake uniform not used by the shader, zero sized uniforms trips up the renderer atm
+
     let mut should_close = false;
     while !should_close {
         event_loop.run_return(|event, _, control_flow| {
@@ -53,7 +61,7 @@ fn main() {
                     *control_flow = ControlFlow::Exit;
                 },
                 Event::MainEventsCleared => {
-                    renderer.render_once(&triangle);
+                    renderer.render_once(&triangle, uniform);
                 },
                 Event::RedrawEventsCleared => *control_flow = ControlFlow::Exit, //. "return"
                 _ => (),                                                         //. ignore other events
