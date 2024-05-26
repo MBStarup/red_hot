@@ -3,8 +3,8 @@ pub mod renderer {
         extensions::khr::{Surface, Swapchain},
         util::read_spv,
         vk::{
-            self, AttachmentReference, CommandBuffer, Fence, Framebuffer, PhysicalDevice, PhysicalDeviceMemoryProperties, Queue, Rect2D, Semaphore, ShaderModule, SubpassDependency, SurfaceFormatKHR,
-            SurfaceKHR, SwapchainKHR,
+            self, AttachmentReference, CommandBuffer, DescriptorType, Fence, Framebuffer, PhysicalDevice, PhysicalDeviceMemoryProperties, Queue, Rect2D, Semaphore, ShaderModule, ShaderStageFlags,
+            SubpassDependency, SurfaceFormatKHR, SurfaceKHR, SwapchainKHR,
         },
         Entry,
     };
@@ -76,7 +76,7 @@ pub mod renderer {
                                     .application_version(0)
                                     .engine_name(app_name)
                                     .engine_version(0)
-                                    .api_version(vk::make_api_version(0, 1, 0, 0)),
+                                    .api_version(vk::make_api_version(0, 1, 2, 0)),
                             )
                             .enabled_layer_names(&layers_names_raw)
                             .enabled_extension_names(&extension_names)
@@ -412,7 +412,8 @@ pub mod renderer {
             }
         }
 
-        pub fn render_once(&self, mesh: &Mesh<Vertex>) {
+        pub fn render_once<U>(&self, mesh: &Mesh<Vertex>, uniform: U)
+        where U: Copy {
             unsafe {
                 let (present_index, _) = self.swapchain_loader.acquire_next_image(self.swapchain, std::u64::MAX, self.present_complete_semaphore, vk::Fence::null()).unwrap();
                 let clear_values = [
@@ -555,6 +556,90 @@ pub mod renderer {
                 self.device.unmap_memory(index_buffer_memory); //? Idk why we do this
                 self.device.bind_buffer_memory(index_buffer, index_buffer_memory, 0).unwrap();
 
+                //# UNIFORM BUFFER EXPERIMENTATION
+                let uniform_buffer = self
+                    .device
+                    .create_buffer(
+                        &vk::BufferCreateInfo { size: mem::size_of::<U>() as u64, usage: vk::BufferUsageFlags::UNIFORM_BUFFER, sharing_mode: vk::SharingMode::EXCLUSIVE, ..Default::default() },
+                        None,
+                    )
+                    .unwrap();
+                let uniform_buffer_memory_req = self.device.get_buffer_memory_requirements(uniform_buffer);
+                let uniform_buffer_memory = self
+                    .device
+                    .allocate_memory(
+                        &vk::MemoryAllocateInfo {
+                            allocation_size: uniform_buffer_memory_req.size,
+                            memory_type_index: self.device_memory_properties.memory_types[..self.device_memory_properties.memory_type_count as _]
+                                .iter()
+                                .enumerate()
+                                .find(|(index, memory_type)| {
+                                    (1 << index) & uniform_buffer_memory_req.memory_type_bits != 0
+                                        && memory_type.property_flags & (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
+                                            == (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
+                                })
+                                .map(|(index, _memory_type)| index as _)
+                                .expect("Unable to find suitable memorytype for the uniform buffer."),
+                            ..Default::default()
+                        },
+                        None,
+                    )
+                    .unwrap();
+
+                let uniform_ptr = self //. Maps the memory on the cpu to the memory of the gpu
+                    .device
+                    .map_memory(uniform_buffer_memory, 0, uniform_buffer_memory_req.size, vk::MemoryMapFlags::empty())
+                    .unwrap();
+
+                ash::util::Align::new(uniform_ptr, mem::align_of::<U>() as u64, uniform_buffer_memory_req.size).copy_from_slice(&[uniform]); //. This copy pastas the data from the stack/heap/whatever to the previously mapped memory, effectively moving it to the gpu
+                self.device.unmap_memory(uniform_buffer_memory); //. Unmaps the memory, as the data is now on the gpu, can leave it mapped if we want to update this in real time to save the remapping every frame/object
+                self.device.bind_buffer_memory(uniform_buffer, uniform_buffer_memory, 0).unwrap();
+
+                let descriptor_set_layouts = [self
+                    .device
+                    .create_descriptor_set_layout(
+                        &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[*vk::DescriptorSetLayoutBinding::builder()
+                            .binding(0)
+                            .descriptor_type(DescriptorType::UNIFORM_BUFFER)
+                            .descriptor_count(1)
+                            .stage_flags(ShaderStageFlags::VERTEX)]),
+                        None,
+                    )
+                    .unwrap()];
+
+                let descriptor_set = self
+                    .device
+                    .allocate_descriptor_sets(
+                        &vk::DescriptorSetAllocateInfo::builder()
+                            .descriptor_pool(
+                                self.device
+                                    .create_descriptor_pool(
+                                        &vk::DescriptorPoolCreateInfo::builder()
+                                            .pool_sizes(&[*vk::DescriptorPoolSize::builder().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(1 as u32)])
+                                            .max_sets(1 as u32),
+                                        None,
+                                    )
+                                    .unwrap(),
+                            )
+                            .set_layouts(&descriptor_set_layouts),
+                    )
+                    .unwrap()[0];
+
+                self.device.update_descriptor_sets(
+                    &[*vk::WriteDescriptorSet::builder()
+                        .dst_set(descriptor_set)
+                        .dst_binding(0) //. We placed the uniform at layout binding = 0
+                        .dst_array_element(0) //. Our uniform is just a single element, not an array, so it's at index 0
+                        .descriptor_type(DescriptorType::UNIFORM_BUFFER)
+                        .buffer_info(&[*vk::DescriptorBufferInfo::builder().buffer(uniform_buffer).offset(0).range(mem::size_of::<U>() as u64)])],
+                    &[],
+                );
+
+                let pipeline_layout = self.device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder().set_layouts(&descriptor_set_layouts), None).unwrap();
+
+                self.device.cmd_bind_descriptor_sets(self.draw_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_layout, 0, &[descriptor_set], &[]);
+                //# END OF UNIFORM BUFFER EXPERIMENTATION
+
                 self.device.cmd_begin_render_pass(self.draw_command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE);
                 self.device.cmd_bind_pipeline(
                     self.draw_command_buffer,
@@ -633,7 +718,7 @@ pub mod renderer {
                                     }]),
                                 )
                                 .dynamic_state(&vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]))
-                                .layout(self.device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::default(), None).unwrap())
+                                .layout(pipeline_layout)
                                 .render_pass(
                                     self.device
                                         .create_render_pass(
@@ -707,6 +792,21 @@ pub mod renderer {
                     .image_indices(&image_indices);
 
                 self.swapchain_loader.queue_present(self.present_queue, &present_info).unwrap();
+
+                //. Clean 'per render' items
+
+                self.device.wait_for_fences(&[self.draw_commands_reuse_fence], true, std::u64::MAX).expect("Wait for fence failed.");
+
+                self.device //. Vulkan complained that I could not free memory currently in use by a command buffer, so I added this reset_command_buffer call, pretty sure it also gets reset right before use, so this might lead to a double reset meme
+                    .reset_command_buffer(self.draw_command_buffer, vk::CommandBufferResetFlags::RELEASE_RESOURCES)
+                    .expect("Reset command buffer failed.");
+
+                self.device.free_memory(index_buffer_memory, None);
+                self.device.destroy_buffer(index_buffer, None);
+                self.device.free_memory(vertex_input_buffer_memory, None);
+                self.device.destroy_buffer(vertex_buffer, None);
+                self.device.free_memory(uniform_buffer_memory, None);
+                self.device.destroy_buffer(uniform_buffer, None);
             }
         }
 
