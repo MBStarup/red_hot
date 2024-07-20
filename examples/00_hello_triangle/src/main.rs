@@ -45,6 +45,7 @@ fn main() {
     let mut renderer = Renderer::<Vertex>::new(&window, window_width, window_height);
     renderer.set_vertex_shader(&include_bytes!("./shader/vert.spv")[..]);
     renderer.set_fragment_shader(&include_bytes!("./shader/frag.spv")[..]);
+    let triangle_meshi = renderer.register_mesh(triangle);
 
     let uniform = Uniform { fake: 0 }; //. Fake uniform not used by the shader, zero sized uniforms trips up the renderer atm
 
@@ -61,7 +62,7 @@ fn main() {
                     *control_flow = ControlFlow::Exit;
                 },
                 Event::MainEventsCleared => {
-                    renderer.render_once(&triangle, uniform);
+                    renderer.render_once(triangle_meshi, uniform);
                 },
                 Event::RedrawEventsCleared => *control_flow = ControlFlow::Exit, //. "return"
                 _ => (),                                                         //. ignore other events

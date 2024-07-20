@@ -7,6 +7,7 @@ edition.workspace = true
 [dependencies]
 ash = { workspace = true }
 ash-window = { workspace = true }
+num = { workspace = true }
 raw-window-handle = { workspace = true }
 winit = { workspace = true }
 
@@ -19,6 +20,7 @@ edition = "2021"
 [workspace.dependencies]
 ash = "0.37.2"
 ash-window = "0.12.0"
+num = "0.4.3"
 raw-window-handle = "0.5.0"
 red_hot = { path = "." }
 winit = "0.27.5"

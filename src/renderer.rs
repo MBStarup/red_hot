@@ -14,6 +14,21 @@ use std::{default::Default, ffi::CStr, io::Cursor, mem, os::raw::c_char};
 
 use winit::window::Window;
 
+#[derive(Debug, Clone, Copy)]
+pub struct MeshIndex(usize);
+
+impl std::fmt::Display for MeshIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "MeshIndex({})", self.0)
+    }
+}
+
+impl Into<usize> for MeshIndex {
+    fn into(self) -> usize {
+        self.0
+    }
+}
+
 pub struct Mesh<Vertex>
 where Vertex: Copy
 {
@@ -49,6 +64,7 @@ where Vertex: Copy
     framebuffers: Vec<Framebuffer>,
     vertex_shader_module: Option<ShaderModule>,
     fragment_shader_module: Option<ShaderModule>,
+    registered_meshes: Vec<Mesh<Vertex>>,
 }
 
 impl<Vertex> Renderer<Vertex>
@@ -379,6 +395,7 @@ where Vertex: Copy
                 dependencies,
                 vertex_shader_module: None,   //. No shaders by default, use other function to add these for now
                 fragment_shader_module: None, //. No shaders by default, use other function to add these for now
+                registered_meshes: vec![],
             }
         }
     }
@@ -411,7 +428,20 @@ where Vertex: Copy
         }
     }
 
-    pub fn render_once<U>(&self, mesh: &Mesh<Vertex>, uniform: U)
+    pub fn register_mesh(&mut self, mesh: Mesh<Vertex>) -> MeshIndex {
+        self.registered_meshes.push(mesh);
+        MeshIndex(self.registered_meshes.len() - 1)
+    }
+
+    pub fn render_once<U>(&self, mesh: MeshIndex, uniform: U)
+    where U: Copy {
+        self.render_once_with_mesh(
+            self.registered_meshes.get(Into::<usize>::into(mesh)).unwrap_or_else(|| panic!("Use of unregistered mesh: {mesh}")),
+            uniform,
+        )
+    }
+
+    fn render_once_with_mesh<U>(&self, mesh: &Mesh<Vertex>, uniform: U)
     where U: Copy {
         unsafe {
             let (present_index, _) = self.swapchain_loader.acquire_next_image(self.swapchain, std::u64::MAX, self.present_complete_semaphore, vk::Fence::null()).unwrap();
