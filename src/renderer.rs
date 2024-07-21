@@ -2,8 +2,8 @@ use ash::{
     extensions::khr::{Surface, Swapchain},
     util::read_spv,
     vk::{
-        self, AttachmentReference, CommandBuffer, DescriptorType, Fence, Framebuffer, PhysicalDevice, PhysicalDeviceMemoryProperties, Queue, Rect2D, Semaphore, ShaderModule, ShaderStageFlags,
-        SubpassDependency, SurfaceFormatKHR, SurfaceKHR, SwapchainKHR,
+        self, AttachmentReference, Buffer, CommandBuffer, DescriptorType, DeviceMemory, Fence, Framebuffer, PhysicalDevice, PhysicalDeviceMemoryProperties, Queue, Rect2D, Semaphore, ShaderModule,
+        ShaderStageFlags, SubpassDependency, SurfaceFormatKHR, SurfaceKHR, SwapchainKHR,
     },
     Entry,
 };
@@ -29,11 +29,13 @@ impl Into<usize> for MeshIndex {
     }
 }
 
+pub type Index = u32;
+
 pub struct Mesh<Vertex>
 where Vertex: Copy
 {
     pub vertices: Vec<Vertex>,
-    pub indices: Vec<u32>,
+    pub indices: Vec<Index>,
 }
 
 pub struct Renderer<Vertex>
@@ -64,7 +66,13 @@ where Vertex: Copy
     framebuffers: Vec<Framebuffer>,
     vertex_shader_module: Option<ShaderModule>,
     fragment_shader_module: Option<ShaderModule>,
-    registered_meshes: Vec<Mesh<Vertex>>,
+    index_buffer_memory: Option<DeviceMemory>,
+    index_buffer: Option<Buffer>,
+    should_regenerate_index_buffer: bool,
+    vertex_buffer_memory: Option<DeviceMemory>,
+    vertex_buffer: Option<Buffer>,
+    should_regenerate_vertex_buffer: bool,
+    registered_meshes: Vec<(Mesh<Vertex>, u32, i32)>,
 }
 
 impl<Vertex> Renderer<Vertex>
@@ -395,6 +403,12 @@ where Vertex: Copy
                 dependencies,
                 vertex_shader_module: None,   //. No shaders by default, use other function to add these for now
                 fragment_shader_module: None, //. No shaders by default, use other function to add these for now
+                index_buffer_memory: None,
+                index_buffer: None,
+                should_regenerate_index_buffer: true,
+                vertex_buffer_memory: None,
+                vertex_buffer: None,
+                should_regenerate_vertex_buffer: true,
                 registered_meshes: vec![],
             }
         }
@@ -429,19 +443,120 @@ where Vertex: Copy
     }
 
     pub fn register_mesh(&mut self, mesh: Mesh<Vertex>) -> MeshIndex {
-        self.registered_meshes.push(mesh);
+        match self.registered_meshes.last() {
+            Some((last_mesh, last_index_offset, last_vertex_offset)) => {
+                self.registered_meshes.push((mesh, last_index_offset + last_mesh.indices.len() as u32, last_vertex_offset + last_mesh.vertices.len() as i32))
+            },
+            None => self.registered_meshes.push((mesh, 0, 0)),
+        }
+        self.should_regenerate_vertex_buffer = true;
+        self.should_regenerate_index_buffer = true;
         MeshIndex(self.registered_meshes.len() - 1)
     }
 
-    pub fn render_once<U>(&self, mesh: MeshIndex, uniform: U)
-    where U: Copy {
-        self.render_once_with_mesh(
-            self.registered_meshes.get(Into::<usize>::into(mesh)).unwrap_or_else(|| panic!("Use of unregistered mesh: {mesh}")),
-            uniform,
-        )
+    pub fn bind_index_buffer(&mut self) -> (vk::DeviceMemory, vk::Buffer) {
+        unsafe {
+            let index_buffer = self
+                .device
+                .create_buffer(
+                    &vk::BufferCreateInfo::builder()
+                        .size((std::mem::size_of::<Index>() * self.registered_meshes.iter().fold(0, |sum, (mesh, _, _)| sum + mesh.indices.len())) as u64)
+                        .usage(vk::BufferUsageFlags::INDEX_BUFFER)
+                        .sharing_mode(vk::SharingMode::EXCLUSIVE),
+                    None,
+                )
+                .unwrap();
+
+            let index_buffer_memory_req = self.device.get_buffer_memory_requirements(index_buffer);
+            let index_buffer_memory = self
+                .device
+                .allocate_memory(
+                    &vk::MemoryAllocateInfo {
+                        allocation_size: index_buffer_memory_req.size,
+                        memory_type_index: self.device_memory_properties.memory_types[..self.device_memory_properties.memory_type_count as _]
+                            .iter()
+                            .enumerate()
+                            .find(|(index, memory_type)| {
+                                (1 << index) & index_buffer_memory_req.memory_type_bits != 0
+                                    && memory_type.property_flags & (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
+                                        == (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
+                            })
+                            .map(|(index, _memory_type)| index as _)
+                            .expect("Unable to find suitable memorytype for the index buffer."),
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .unwrap();
+
+            let mut index_ptr = self.device.map_memory(index_buffer_memory, 0, index_buffer_memory_req.size, vk::MemoryMapFlags::empty()).unwrap() as *mut Index;
+
+            for (mesh, _, _) in self.registered_meshes.iter() {
+                std::ptr::copy_nonoverlapping::<Index>(mesh.indices.as_ptr(), index_ptr, mesh.indices.len());
+                index_ptr = index_ptr.add(mesh.indices.len());
+            }
+
+            self.device.unmap_memory(index_buffer_memory);
+            self.device.bind_buffer_memory(index_buffer, index_buffer_memory, 0).unwrap();
+            (index_buffer_memory, index_buffer)
+        }
     }
 
-    fn render_once_with_mesh<U>(&self, mesh: &Mesh<Vertex>, uniform: U)
+    pub fn bind_vertex_buffer(&mut self) -> (vk::DeviceMemory, vk::Buffer) {
+        unsafe {
+            let vertex_buffer = self
+                .device
+                .create_buffer(
+                    &vk::BufferCreateInfo {
+                        size: (mem::size_of::<Vertex>() * self.registered_meshes.iter().fold(0, |sum, (mesh, _, _)| sum + mesh.vertices.len())) as u64,
+                        usage: vk::BufferUsageFlags::VERTEX_BUFFER,
+                        sharing_mode: vk::SharingMode::EXCLUSIVE,
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .unwrap();
+
+            let vertex_buffer_memory_req = self.device.get_buffer_memory_requirements(vertex_buffer);
+            let vertex_buffer_memory = self
+                .device
+                .allocate_memory(
+                    &vk::MemoryAllocateInfo {
+                        allocation_size: vertex_buffer_memory_req.size,
+                        memory_type_index: self.device_memory_properties.memory_types[..self.device_memory_properties.memory_type_count as _]
+                            .iter()
+                            .enumerate()
+                            .find(|(index, memory_type)| {
+                                (1 << index) & vertex_buffer_memory_req.memory_type_bits != 0
+                                    && memory_type.property_flags & (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
+                                        == (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
+                            })
+                            .map(|(index, _memory_type)| index as _)
+                            .expect("Unable to find suitable memorytype for the vertex buffer."),
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .unwrap();
+
+            let mut vert_ptr = self.device.map_memory(vertex_buffer_memory, 0, vertex_buffer_memory_req.size, vk::MemoryMapFlags::empty()).unwrap() as *mut Vertex;
+
+            for (mesh, _, _) in self.registered_meshes.iter() {
+                std::ptr::copy_nonoverlapping::<Vertex>(mesh.vertices.as_ptr(), vert_ptr, mesh.vertices.len());
+                vert_ptr = vert_ptr.add(mesh.vertices.len());
+            }
+
+            self.device.unmap_memory(vertex_buffer_memory); //? ???
+            self.device.bind_buffer_memory(vertex_buffer, vertex_buffer_memory, 0).unwrap();
+            (vertex_buffer_memory, vertex_buffer)
+        }
+    }
+
+    pub fn get_mesh(&self, meshi: MeshIndex) -> &Mesh<Vertex> {
+        &self.registered_meshes.get(Into::<usize>::into(meshi)).unwrap_or_else(|| panic!("Use of unregistered mesh: {meshi}")).0
+    }
+
+    pub fn render_once<U>(&mut self, meshi: MeshIndex, uniform: U)
     where U: Copy {
         unsafe {
             let (present_index, _) = self.swapchain_loader.acquire_next_image(self.swapchain, std::u64::MAX, self.present_complete_semaphore, vk::Fence::null()).unwrap();
@@ -502,88 +617,35 @@ where Vertex: Copy
             let scissors = [*Rect2D::builder().extent(*vk::Extent2D::builder().width(self.window_width).height(self.window_height))];
             let viewports = [vk::Viewport { x: 0.0, y: 0.0, width: self.window_width as f32, height: self.window_height as f32, min_depth: 0.0, max_depth: 1.0 }];
 
-            let vertex_buffer = self
-                .device
-                .create_buffer(
-                    &vk::BufferCreateInfo {
-                        size: (mem::size_of::<Vertex>() * mesh.vertices.len()) as u64,
-                        usage: vk::BufferUsageFlags::VERTEX_BUFFER,
-                        sharing_mode: vk::SharingMode::EXCLUSIVE,
-                        ..Default::default()
-                    },
-                    None,
-                )
-                .unwrap();
+            if self.should_regenerate_vertex_buffer {
+                //# Clean up old buffer, if any
+                match self.vertex_buffer_memory {
+                    Some(buffer_memory) => self.device.free_memory(buffer_memory, None),
+                    None => (),
+                }
+                match self.vertex_buffer {
+                    Some(buffer) => self.device.destroy_buffer(buffer, None),
+                    None => (),
+                }
+                //# Create new buffer
+                (self.vertex_buffer_memory, self.vertex_buffer) = Some(self.bind_vertex_buffer()).unzip();
+                self.should_regenerate_vertex_buffer = false;
+            }
 
-            let vertex_buffer_memory_req = self.device.get_buffer_memory_requirements(vertex_buffer);
-            let vertex_input_buffer_memory = self
-                .device
-                .allocate_memory(
-                    &vk::MemoryAllocateInfo {
-                        allocation_size: vertex_buffer_memory_req.size,
-                        memory_type_index: self.device_memory_properties.memory_types[..self.device_memory_properties.memory_type_count as _]
-                            .iter()
-                            .enumerate()
-                            .find(|(index, memory_type)| {
-                                (1 << index) & vertex_buffer_memory_req.memory_type_bits != 0
-                                    && memory_type.property_flags & (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
-                                        == (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
-                            })
-                            .map(|(index, _memory_type)| index as _)
-                            .expect("Unable to find suitable memorytype for the vertex buffer."),
-                        ..Default::default()
-                    },
-                    None,
-                )
-                .unwrap();
-
-            let vert_ptr = self.device.map_memory(vertex_input_buffer_memory, 0, vertex_buffer_memory_req.size, vk::MemoryMapFlags::empty()).unwrap();
-
-            ash::util::Align::new(vert_ptr, mem::align_of::<Vertex>() as u64, vertex_buffer_memory_req.size).copy_from_slice(&mesh.vertices); //? ???
-            self.device.unmap_memory(vertex_input_buffer_memory); //? ???
-            self.device.bind_buffer_memory(vertex_buffer, vertex_input_buffer_memory, 0).unwrap();
-
-            let index_buffer = self
-                .device
-                .create_buffer(
-                    &vk::BufferCreateInfo::builder()
-                        .size(std::mem::size_of_val(mesh.indices.as_slice()) as u64)
-                        .usage(vk::BufferUsageFlags::INDEX_BUFFER)
-                        .sharing_mode(vk::SharingMode::EXCLUSIVE),
-                    None,
-                )
-                .unwrap();
-
-            let index_buffer_memory_req = self.device.get_buffer_memory_requirements(index_buffer);
-            let index_buffer_memory = self
-                .device
-                .allocate_memory(
-                    &vk::MemoryAllocateInfo {
-                        allocation_size: index_buffer_memory_req.size,
-                        memory_type_index: self.device_memory_properties.memory_types[..self.device_memory_properties.memory_type_count as _]
-                            .iter()
-                            .enumerate()
-                            .find(|(index, memory_type)| {
-                                (1 << index) & index_buffer_memory_req.memory_type_bits != 0
-                                    && memory_type.property_flags & (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
-                                        == (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
-                            })
-                            .map(|(index, _memory_type)| index as _)
-                            .expect("Unable to find suitable memorytype for the index buffer."),
-                        ..Default::default()
-                    },
-                    None,
-                )
-                .unwrap();
-
-            ash::util::Align::new(
-                self.device.map_memory(index_buffer_memory, 0, index_buffer_memory_req.size, vk::MemoryMapFlags::empty()).unwrap(),
-                mem::align_of::<u32>() as u64,
-                index_buffer_memory_req.size,
-            )
-            .copy_from_slice(&mesh.indices); //? Do we not use this??
-            self.device.unmap_memory(index_buffer_memory); //? Idk why we do this
-            self.device.bind_buffer_memory(index_buffer, index_buffer_memory, 0).unwrap();
+            if self.should_regenerate_index_buffer {
+                //# Clean up old buffer, if any
+                match self.index_buffer_memory {
+                    Some(buffer_memory) => self.device.free_memory(buffer_memory, None),
+                    None => (),
+                }
+                match self.index_buffer {
+                    Some(buffer) => self.device.destroy_buffer(buffer, None),
+                    None => (),
+                }
+                //# Create new buffer
+                (self.index_buffer_memory, self.index_buffer) = Some(self.bind_index_buffer()).unzip();
+                self.should_regenerate_index_buffer = false;
+            }
 
             //# UNIFORM BUFFER EXPERIMENTATION
             let uniform_buffer = self
@@ -787,11 +849,12 @@ where Vertex: Copy
 
             self.device.cmd_set_viewport(self.draw_command_buffer, 0, &viewports);
             self.device.cmd_set_scissor(self.draw_command_buffer, 0, &scissors); //. This is downright silly
-            self.device.cmd_bind_vertex_buffers(self.draw_command_buffer, 0, &[vertex_buffer], &[0]);
-            self.device.cmd_bind_index_buffer(self.draw_command_buffer, index_buffer, 0, vk::IndexType::UINT32);
-            self.device.cmd_draw_indexed(self.draw_command_buffer, mesh.indices.len() as u32, 1, 0, 0, 1);
+            self.device.cmd_bind_vertex_buffers(self.draw_command_buffer, 0, &[self.vertex_buffer.expect("No Vertex buffer")], &[0]);
+            self.device.cmd_bind_index_buffer(self.draw_command_buffer, self.index_buffer.expect("No index buffer"), 0, vk::IndexType::UINT32);
+            let (mesh, index_offset, vertex_offset) = self.registered_meshes.get(meshi.0).unwrap();
+            self.device.cmd_draw_indexed(self.draw_command_buffer, mesh.indices.len() as u32, 1, *index_offset, *vertex_offset, 0);
             //. Or draw without the index buffer
-            // device.cmd_draw(draw_command_buffer, 3, 1, 0, 0);
+            // self.device.cmd_draw(self.draw_command_buffer, 3, 1, 0, 0);
             self.device.cmd_end_render_pass(self.draw_command_buffer);
 
             self.device.end_command_buffer(self.draw_command_buffer).expect("End commandbuffer");
@@ -811,12 +874,15 @@ where Vertex: Copy
             let wait_semaphors = [self.rendering_complete_semaphore];
             let swapchains = [self.swapchain];
             let image_indices = [present_index];
-            let present_info = vk::PresentInfoKHR::builder()
-                .wait_semaphores(&wait_semaphors) // &base.rendering_complete_semaphore)
-                .swapchains(&swapchains)
-                .image_indices(&image_indices);
-
-            self.swapchain_loader.queue_present(self.present_queue, &present_info).unwrap();
+            self.swapchain_loader
+                .queue_present(
+                    self.present_queue,
+                    &vk::PresentInfoKHR::builder()
+                        .wait_semaphores(&wait_semaphors) // &base.rendering_complete_semaphore)
+                        .swapchains(&swapchains)
+                        .image_indices(&image_indices),
+                )
+                .unwrap();
 
             //# Clean 'per render' items
             self.device.wait_for_fences(&[self.draw_commands_reuse_fence], true, std::u64::MAX).expect("Wait for fence failed.");
@@ -825,10 +891,6 @@ where Vertex: Copy
                 .reset_command_buffer(self.draw_command_buffer, vk::CommandBufferResetFlags::RELEASE_RESOURCES)
                 .expect("Reset command buffer failed.");
 
-            self.device.free_memory(index_buffer_memory, None);
-            self.device.destroy_buffer(index_buffer, None);
-            self.device.free_memory(vertex_input_buffer_memory, None);
-            self.device.destroy_buffer(vertex_buffer, None);
             self.device.free_memory(uniform_buffer_memory, None);
             self.device.destroy_buffer(uniform_buffer, None);
         }
