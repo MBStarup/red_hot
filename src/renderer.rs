@@ -66,6 +66,7 @@ where Vertex: Copy
     framebuffers: Vec<Framebuffer>,
     vertex_shader_module: Option<ShaderModule>,
     fragment_shader_module: Option<ShaderModule>,
+    min_uniform_buffer_offset_alignment: usize,
     index_buffer_memory: Option<DeviceMemory>,
     index_buffer: Option<Buffer>,
     should_regenerate_index_buffer: bool,
@@ -125,6 +126,8 @@ where Vertex: Copy
                     })
                 })
                 .expect("Couldn't find suitable device.");
+
+            let min_uniform_buffer_offset_alignment = instance.get_physical_device_properties(pdevice).limits.min_uniform_buffer_offset_alignment;
 
             //# Creating device
             let device: Device = instance
@@ -403,6 +406,7 @@ where Vertex: Copy
                 dependencies,
                 vertex_shader_module: None,   //. No shaders by default, use other function to add these for now
                 fragment_shader_module: None, //. No shaders by default, use other function to add these for now
+                min_uniform_buffer_offset_alignment: min_uniform_buffer_offset_alignment as usize,
                 index_buffer_memory: None,
                 index_buffer: None,
                 should_regenerate_index_buffer: true,
@@ -556,8 +560,11 @@ where Vertex: Copy
         &self.registered_meshes.get(Into::<usize>::into(meshi)).unwrap_or_else(|| panic!("Use of unregistered mesh: {meshi}")).0
     }
 
-    pub fn render_once<U>(&mut self, meshi: MeshIndex, uniform: U)
-    where U: Copy {
+    pub fn render<DU, OU>(&mut self, draw_uniform: DU, meshis: Vec<MeshIndex>, object_uniforms: Vec<OU>)
+    where
+        DU: Copy,
+        OU: Copy,
+    {
         unsafe {
             let (present_index, _) = self.swapchain_loader.acquire_next_image(self.swapchain, std::u64::MAX, self.present_complete_semaphore, vk::Fence::null()).unwrap();
             let clear_values = [
@@ -648,45 +655,45 @@ where Vertex: Copy
             }
 
             //# UNIFORM BUFFER EXPERIMENTATION
-            let uniform_buffer = self
+            let draw_uniform_buffer = self
                 .device
                 .create_buffer(
-                    &vk::BufferCreateInfo { size: mem::size_of::<U>() as u64, usage: vk::BufferUsageFlags::UNIFORM_BUFFER, sharing_mode: vk::SharingMode::EXCLUSIVE, ..Default::default() },
+                    &vk::BufferCreateInfo { size: mem::size_of::<DU>() as u64, usage: vk::BufferUsageFlags::UNIFORM_BUFFER, sharing_mode: vk::SharingMode::EXCLUSIVE, ..Default::default() },
                     None,
                 )
                 .unwrap();
-            let uniform_buffer_memory_req = self.device.get_buffer_memory_requirements(uniform_buffer);
-            let uniform_buffer_memory = self
+            let draw_uniform_buffer_memory_req = self.device.get_buffer_memory_requirements(draw_uniform_buffer);
+            let draw_uniform_buffer_memory = self
                 .device
                 .allocate_memory(
                     &vk::MemoryAllocateInfo {
-                        allocation_size: uniform_buffer_memory_req.size,
+                        allocation_size: draw_uniform_buffer_memory_req.size,
                         memory_type_index: self.device_memory_properties.memory_types[..self.device_memory_properties.memory_type_count as _]
                             .iter()
                             .enumerate()
                             .find(|(index, memory_type)| {
-                                (1 << index) & uniform_buffer_memory_req.memory_type_bits != 0
+                                (1 << index) & draw_uniform_buffer_memory_req.memory_type_bits != 0
                                     && memory_type.property_flags & (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
                                         == (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
                             })
                             .map(|(index, _memory_type)| index as _)
-                            .expect("Unable to find suitable memorytype for the uniform buffer."),
+                            .expect("Unable to find suitable memorytype for the draw uniform buffer."),
                         ..Default::default()
                     },
                     None,
                 )
                 .unwrap();
 
-            let uniform_ptr = self //. Maps the memory on the cpu to the memory of the gpu
+            let draw_uniform_ptr = self //. Maps the memory on the cpu to the memory of the gpu
                 .device
-                .map_memory(uniform_buffer_memory, 0, uniform_buffer_memory_req.size, vk::MemoryMapFlags::empty())
+                .map_memory(draw_uniform_buffer_memory, 0, draw_uniform_buffer_memory_req.size, vk::MemoryMapFlags::empty())
                 .unwrap();
 
-            ash::util::Align::new(uniform_ptr, mem::align_of::<U>() as u64, uniform_buffer_memory_req.size).copy_from_slice(&[uniform]); //. This copy pastas the data from the stack/heap/whatever to the previously mapped memory, effectively moving it to the gpu
-            self.device.unmap_memory(uniform_buffer_memory); //. Unmaps the memory, as the data is now on the gpu, can leave it mapped if we want to update this in real time to save the remapping every frame/object
-            self.device.bind_buffer_memory(uniform_buffer, uniform_buffer_memory, 0).unwrap();
+            ash::util::Align::new(draw_uniform_ptr, mem::align_of::<DU>() as u64, draw_uniform_buffer_memory_req.size).copy_from_slice(&[draw_uniform]); //. This copy pastas the data from the stack/heap/whatever to the previously mapped memory, effectively moving it to the gpu
+            self.device.unmap_memory(draw_uniform_buffer_memory); //. Unmaps the memory, as the data is now on the gpu, can leave it mapped if we want to update this in real time to save the remapping every frame/object
+            self.device.bind_buffer_memory(draw_uniform_buffer, draw_uniform_buffer_memory, 0).unwrap();
 
-            let descriptor_set_layouts = [self
+            let draw_descriptor_set_layout = [self
                 .device
                 .create_descriptor_set_layout(
                     &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[*vk::DescriptorSetLayoutBinding::builder()
@@ -698,7 +705,7 @@ where Vertex: Copy
                 )
                 .unwrap()];
 
-            let descriptor_set = self
+            let draw_descriptor_set = self
                 .device
                 .allocate_descriptor_sets(
                     &vk::DescriptorSetAllocateInfo::builder()
@@ -712,150 +719,263 @@ where Vertex: Copy
                                 )
                                 .unwrap(),
                         )
-                        .set_layouts(&descriptor_set_layouts),
+                        .set_layouts(&draw_descriptor_set_layout),
                 )
                 .unwrap()[0];
 
             self.device.update_descriptor_sets(
                 &[*vk::WriteDescriptorSet::builder()
-                    .dst_set(descriptor_set)
-                    .dst_binding(0) //. We placed the uniform at layout binding = 0
+                    .dst_set(draw_descriptor_set)
+                    .dst_binding(0) //. We placed the draw uniform at layout binding = 0
                     .dst_array_element(0) //. Our uniform is just a single element, not an array, so it's at index 0
                     .descriptor_type(DescriptorType::UNIFORM_BUFFER)
-                    .buffer_info(&[*vk::DescriptorBufferInfo::builder().buffer(uniform_buffer).offset(0).range(mem::size_of::<U>() as u64)])],
+                    .buffer_info(&[*vk::DescriptorBufferInfo::builder().buffer(draw_uniform_buffer).offset(0).range(mem::size_of::<DU>() as u64)])],
                 &[],
             );
 
-            let pipeline_layout = self.device.create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder().set_layouts(&descriptor_set_layouts), None).unwrap();
+            //# PER OBJECT
+            let object_uniform_stride = (((mem::size_of::<OU>() - 1) / self.min_uniform_buffer_offset_alignment) + 1) * self.min_uniform_buffer_offset_alignment; //. Always at least "align"
 
-            self.device.cmd_bind_descriptor_sets(self.draw_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline_layout, 0, &[descriptor_set], &[]);
-            //# END OF UNIFORM BUFFER EXPERIMENTATION
+            let object_uniform_buffer = self
+                .device
+                .create_buffer(
+                    &vk::BufferCreateInfo {
+                        size: (object_uniform_stride * object_uniforms.len()) as u64,
+                        usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
+                        sharing_mode: vk::SharingMode::EXCLUSIVE,
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .unwrap();
 
-            self.device.cmd_begin_render_pass(self.draw_command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE);
-            self.device.cmd_bind_pipeline(
-                self.draw_command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                *(self.device)
-                    .create_graphics_pipelines(
-                        vk::PipelineCache::null(),
-                        &[vk::GraphicsPipelineCreateInfo::builder()
-                            .stages(&[
-                                vk::PipelineShaderStageCreateInfo {
-                                    module: self.vertex_shader_module.expect("Vertex shader should be set, before rendering begins"),
-                                    p_name: CStr::from_bytes_with_nul_unchecked(b"main\0").as_ptr(),
-                                    stage: vk::ShaderStageFlags::VERTEX,
-                                    ..Default::default()
-                                },
-                                vk::PipelineShaderStageCreateInfo {
-                                    s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
-                                    module: self.fragment_shader_module.expect("Fragment shader should be set, before rendering begins"),
-                                    p_name: CStr::from_bytes_with_nul_unchecked(b"main\0").as_ptr(),
-                                    stage: vk::ShaderStageFlags::FRAGMENT,
-                                    ..Default::default()
-                                },
-                            ])
-                            .vertex_input_state(
-                                &vk::PipelineVertexInputStateCreateInfo::builder()
-                                    .vertex_attribute_descriptions(&[
-                                        vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 },
-                                        vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 },
-                                    ])
-                                    .vertex_binding_descriptions(&[vk::VertexInputBindingDescription { binding: 0, stride: mem::size_of::<Vertex>() as u32, input_rate: vk::VertexInputRate::VERTEX }]), //? Shouldn't this use the padded size? or am I misunderstanding that? If I am, fix the functions that make the vertex/index buffer, right now it doesn't matter though, as they seem to always be the same
-                            )
-                            .input_assembly_state(&vk::PipelineInputAssemblyStateCreateInfo { topology: vk::PrimitiveTopology::TRIANGLE_LIST, ..Default::default() })
-                            .viewport_state(&vk::PipelineViewportStateCreateInfo::builder().scissors(&scissors).viewports(&viewports))
-                            .rasterization_state(&vk::PipelineRasterizationStateCreateInfo {
-                                front_face: vk::FrontFace::COUNTER_CLOCKWISE,
-                                line_width: 1.0,
-                                polygon_mode: vk::PolygonMode::FILL,
-                                ..Default::default()
+            let object_uniform_buffer_memory_req = self.device.get_buffer_memory_requirements(object_uniform_buffer);
+            let object_uniform_buffer_memory = self
+                .device
+                .allocate_memory(
+                    &vk::MemoryAllocateInfo {
+                        allocation_size: object_uniform_buffer_memory_req.size,
+                        memory_type_index: self.device_memory_properties.memory_types[..self.device_memory_properties.memory_type_count as _]
+                            .iter()
+                            .enumerate()
+                            .find(|(index, memory_type)| {
+                                (1 << index) & object_uniform_buffer_memory_req.memory_type_bits != 0
+                                    && memory_type.property_flags & (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
+                                        == (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
                             })
-                            .multisample_state(&vk::PipelineMultisampleStateCreateInfo { rasterization_samples: vk::SampleCountFlags::TYPE_1, ..Default::default() })
-                            .depth_stencil_state(&vk::PipelineDepthStencilStateCreateInfo {
-                                depth_test_enable: 1,
-                                depth_write_enable: 1,
-                                depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
-                                front: vk::StencilOpState {
-                                    fail_op: vk::StencilOp::KEEP,
-                                    pass_op: vk::StencilOp::KEEP,
-                                    depth_fail_op: vk::StencilOp::KEEP,
-                                    compare_op: vk::CompareOp::ALWAYS,
-                                    ..Default::default()
-                                },
-                                back: vk::StencilOpState {
-                                    fail_op: vk::StencilOp::KEEP,
-                                    pass_op: vk::StencilOp::KEEP,
-                                    depth_fail_op: vk::StencilOp::KEEP,
-                                    compare_op: vk::CompareOp::ALWAYS,
-                                    ..Default::default()
-                                },
-                                max_depth_bounds: 1.0,
-                                ..Default::default()
-                            })
-                            .color_blend_state(
-                                &vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
-                                    blend_enable: 0,
-                                    src_color_blend_factor: vk::BlendFactor::SRC_COLOR,
-                                    dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_DST_COLOR,
-                                    color_blend_op: vk::BlendOp::ADD,
-                                    src_alpha_blend_factor: vk::BlendFactor::ZERO,
-                                    dst_alpha_blend_factor: vk::BlendFactor::ZERO,
-                                    alpha_blend_op: vk::BlendOp::ADD,
-                                    color_write_mask: vk::ColorComponentFlags::RGBA,
-                                }]),
-                            )
-                            .dynamic_state(&vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]))
-                            .layout(pipeline_layout)
-                            .render_pass(
-                                self.device
-                                    .create_render_pass(
-                                        &vk::RenderPassCreateInfo::builder()
-                                            .attachments(&[
-                                                vk::AttachmentDescription {
-                                                    format: self.surface_format.format,
-                                                    samples: vk::SampleCountFlags::TYPE_1,
-                                                    load_op: vk::AttachmentLoadOp::CLEAR,
-                                                    store_op: vk::AttachmentStoreOp::STORE,
-                                                    final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
-                                                    ..Default::default()
-                                                },
-                                                vk::AttachmentDescription {
-                                                    format: vk::Format::D16_UNORM,
-                                                    samples: vk::SampleCountFlags::TYPE_1,
-                                                    load_op: vk::AttachmentLoadOp::CLEAR,
-                                                    initial_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                                    final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-                                                    ..Default::default()
-                                                },
-                                            ])
-                                            .subpasses(std::slice::from_ref(
-                                                &vk::SubpassDescription::builder()
-                                                    .color_attachments(&self.color_attachment_refs)
-                                                    .depth_stencil_attachment(&self.depth_attachment_ref)
-                                                    .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS),
-                                            ))
-                                            .dependencies(&self.dependencies),
-                                        None,
-                                    )
-                                    .unwrap(),
-                            )
-                            .build()],
-                        None,
-                    )
-                    .expect("Unable to create graphics pipeline")
-                    .first()
-                    .unwrap(),
+                            .map(|(index, _memory_type)| index as _)
+                            .expect("Unable to find suitable memorytype for the object uniform buffer."),
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .unwrap();
+
+            let object_uniform_ptr = self //. Maps the memory on the cpu to the memory of the gpu
+                .device
+                .map_memory(object_uniform_buffer_memory, 0, object_uniform_buffer_memory_req.size, vk::MemoryMapFlags::empty())
+                .unwrap();
+
+            for (i, object_uniform) in object_uniforms.iter().enumerate() {
+                *(object_uniform_ptr.cast::<u8>().add(i * object_uniform_stride).cast::<OU>()) = *object_uniform;
+            }
+
+            self.device.unmap_memory(object_uniform_buffer_memory); //. Unmaps the memory, as the data is now on the gpu, can leave it mapped if we want to update this in real time to save the remapping every frame/object
+            self.device.bind_buffer_memory(object_uniform_buffer, object_uniform_buffer_memory, 0).unwrap();
+
+            let object_descriptor_set_layout = [self
+                .device
+                .create_descriptor_set_layout(
+                    &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[*vk::DescriptorSetLayoutBinding::builder()
+                        .binding(0)
+                        .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                        .descriptor_count(1)
+                        .stage_flags(ShaderStageFlags::VERTEX)]),
+                    None,
+                )
+                .unwrap()];
+
+            let object_descriptor_set = self
+                .device
+                .allocate_descriptor_sets(
+                    &vk::DescriptorSetAllocateInfo::builder()
+                        .descriptor_pool(
+                            self.device
+                                .create_descriptor_pool(
+                                    &vk::DescriptorPoolCreateInfo::builder()
+                                        .pool_sizes(&[*vk::DescriptorPoolSize::builder().ty(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC).descriptor_count(1 as u32)])
+                                        .max_sets(1 as u32),
+                                    None,
+                                )
+                                .unwrap(),
+                        )
+                        .set_layouts(&object_descriptor_set_layout),
+                )
+                .unwrap()[0];
+
+            self.device.update_descriptor_sets(
+                &[*vk::WriteDescriptorSet::builder()
+                    .dst_set(object_descriptor_set)
+                    .dst_binding(0) //. We placed the object uniform at layout binding = 0 (will be different layout set than the draw uniform)
+                    .dst_array_element(0) //. Our uniform is just a single element, not an array, so it's at index 0
+                    .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
+                    .buffer_info(&[*vk::DescriptorBufferInfo::builder().buffer(object_uniform_buffer).offset(0).range(mem::size_of::<OU>() as u64)])],
+                &[],
             );
 
-            self.device.cmd_set_viewport(self.draw_command_buffer, 0, &viewports);
-            self.device.cmd_set_scissor(self.draw_command_buffer, 0, &scissors); //. This is downright silly
-            self.device.cmd_bind_vertex_buffers(self.draw_command_buffer, 0, &[self.vertex_buffer.expect("No Vertex buffer")], &[0]);
-            self.device.cmd_bind_index_buffer(self.draw_command_buffer, self.index_buffer.expect("No index buffer"), 0, vk::IndexType::UINT32);
-            let (mesh, index_offset, vertex_offset) = self.registered_meshes.get(meshi.0).unwrap();
-            self.device.cmd_draw_indexed(self.draw_command_buffer, mesh.indices.len() as u32, 1, *index_offset, *vertex_offset, 0);
-            //. Or draw without the index buffer
-            // self.device.cmd_draw(self.draw_command_buffer, 3, 1, 0, 0);
-            self.device.cmd_end_render_pass(self.draw_command_buffer);
+            let pipeline_layout = self
+                .device
+                .create_pipeline_layout(
+                    &vk::PipelineLayoutCreateInfo::builder().set_layouts(&[draw_descriptor_set_layout[0], object_descriptor_set_layout[0]]),
+                    None,
+                )
+                .unwrap();
+
+            self.device.cmd_bind_descriptor_sets(
+                self.draw_command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                pipeline_layout,
+                0,
+                &[draw_descriptor_set, object_descriptor_set], // ! As far as I can tell, the order in this array is what defines what set indexes I need ot use in the shaders
+                &[0],
+            );
+            //# END OF UNIFORM BUFFER EXPERIMENTATION
+
+            let pipeline = *(self.device)
+                .create_graphics_pipelines(
+                    vk::PipelineCache::null(),
+                    &[vk::GraphicsPipelineCreateInfo::builder()
+                        .stages(&[
+                            vk::PipelineShaderStageCreateInfo {
+                                module: self.vertex_shader_module.expect("Vertex shader should be set, before rendering begins"),
+                                p_name: CStr::from_bytes_with_nul_unchecked(b"main\0").as_ptr(),
+                                stage: vk::ShaderStageFlags::VERTEX,
+                                ..Default::default()
+                            },
+                            vk::PipelineShaderStageCreateInfo {
+                                s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
+                                module: self.fragment_shader_module.expect("Fragment shader should be set, before rendering begins"),
+                                p_name: CStr::from_bytes_with_nul_unchecked(b"main\0").as_ptr(),
+                                stage: vk::ShaderStageFlags::FRAGMENT,
+                                ..Default::default()
+                            },
+                        ])
+                        .vertex_input_state(
+                            &vk::PipelineVertexInputStateCreateInfo::builder()
+                                .vertex_attribute_descriptions(&[
+                                    vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 },
+                                    vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 },
+                                ])
+                                .vertex_binding_descriptions(&[vk::VertexInputBindingDescription { binding: 0, stride: mem::size_of::<Vertex>() as u32, input_rate: vk::VertexInputRate::VERTEX }]), //? shouldn't this use the padded size? or am I misunderstanding that? If I am, fix the functions that make the vertex/index buffer, right now it doesn't matter though, as they seem to always be the same
+                        )
+                        .input_assembly_state(&vk::PipelineInputAssemblyStateCreateInfo { topology: vk::PrimitiveTopology::TRIANGLE_LIST, ..Default::default() })
+                        .viewport_state(&vk::PipelineViewportStateCreateInfo::builder().scissors(&scissors).viewports(&viewports))
+                        .rasterization_state(&vk::PipelineRasterizationStateCreateInfo {
+                            front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                            line_width: 1.0,
+                            polygon_mode: vk::PolygonMode::FILL,
+                            ..Default::default()
+                        })
+                        .multisample_state(&vk::PipelineMultisampleStateCreateInfo { rasterization_samples: vk::SampleCountFlags::TYPE_1, ..Default::default() })
+                        .depth_stencil_state(&vk::PipelineDepthStencilStateCreateInfo {
+                            depth_test_enable: 1,
+                            depth_write_enable: 1,
+                            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                            front: vk::StencilOpState {
+                                fail_op: vk::StencilOp::KEEP,
+                                pass_op: vk::StencilOp::KEEP,
+                                depth_fail_op: vk::StencilOp::KEEP,
+                                compare_op: vk::CompareOp::ALWAYS,
+                                ..Default::default()
+                            },
+                            back: vk::StencilOpState {
+                                fail_op: vk::StencilOp::KEEP,
+                                pass_op: vk::StencilOp::KEEP,
+                                depth_fail_op: vk::StencilOp::KEEP,
+                                compare_op: vk::CompareOp::ALWAYS,
+                                ..Default::default()
+                            },
+                            max_depth_bounds: 1.0,
+                            ..Default::default()
+                        })
+                        .color_blend_state(
+                            &vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
+                                blend_enable: 0,
+                                src_color_blend_factor: vk::BlendFactor::SRC_COLOR,
+                                dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_DST_COLOR,
+                                color_blend_op: vk::BlendOp::ADD,
+                                src_alpha_blend_factor: vk::BlendFactor::ZERO,
+                                dst_alpha_blend_factor: vk::BlendFactor::ZERO,
+                                alpha_blend_op: vk::BlendOp::ADD,
+                                color_write_mask: vk::ColorComponentFlags::RGBA,
+                            }]),
+                        )
+                        .dynamic_state(&vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]))
+                        .layout(pipeline_layout)
+                        .render_pass(
+                            self.device
+                                .create_render_pass(
+                                    &vk::RenderPassCreateInfo::builder()
+                                        .attachments(&[
+                                            vk::AttachmentDescription {
+                                                format: self.surface_format.format,
+                                                samples: vk::SampleCountFlags::TYPE_1,
+                                                load_op: vk::AttachmentLoadOp::CLEAR,
+                                                store_op: vk::AttachmentStoreOp::STORE,
+                                                final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                                                ..Default::default()
+                                            },
+                                            vk::AttachmentDescription {
+                                                format: vk::Format::D16_UNORM,
+                                                samples: vk::SampleCountFlags::TYPE_1,
+                                                load_op: vk::AttachmentLoadOp::CLEAR,
+                                                initial_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                                final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                                                ..Default::default()
+                                            },
+                                        ])
+                                        .subpasses(std::slice::from_ref(
+                                            &vk::SubpassDescription::builder()
+                                                .color_attachments(&self.color_attachment_refs)
+                                                .depth_stencil_attachment(&self.depth_attachment_ref)
+                                                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS),
+                                        ))
+                                        .dependencies(&self.dependencies),
+                                    None,
+                                )
+                                .unwrap(),
+                        )
+                        .build()],
+                    None,
+                )
+                .expect("Unable to create graphics pipeline")
+                .first()
+                .unwrap();
+
+            {
+                self.device.cmd_begin_render_pass(self.draw_command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE);
+                self.device.cmd_bind_pipeline(self.draw_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline);
+
+                self.device.cmd_set_viewport(self.draw_command_buffer, 0, &viewports);
+                self.device.cmd_set_scissor(self.draw_command_buffer, 0, &scissors); //. This is downright silly
+                self.device.cmd_bind_vertex_buffers(self.draw_command_buffer, 0, &[self.vertex_buffer.expect("No Vertex buffer")], &[0]);
+                self.device.cmd_bind_index_buffer(self.draw_command_buffer, self.index_buffer.expect("No index buffer"), 0, vk::IndexType::UINT32);
+
+                for (i, meshi) in meshis.iter().enumerate() {
+                    let (mesh, index_offset, vertex_offset) = self.registered_meshes.get(meshi.0).unwrap();
+                    self.device.cmd_bind_descriptor_sets(
+                        self.draw_command_buffer,
+                        vk::PipelineBindPoint::GRAPHICS,
+                        pipeline_layout,
+                        0,
+                        &[draw_descriptor_set, object_descriptor_set],
+                        &[(i * object_uniform_stride as usize) as u32],
+                    );
+                    self.device.cmd_draw_indexed(self.draw_command_buffer, mesh.indices.len() as u32, 1, *index_offset, *vertex_offset, 0);
+                }
+
+                self.device.cmd_end_render_pass(self.draw_command_buffer);
+            }
 
             self.device.end_command_buffer(self.draw_command_buffer).expect("End commandbuffer");
 
@@ -891,25 +1011,29 @@ where Vertex: Copy
                 .reset_command_buffer(self.draw_command_buffer, vk::CommandBufferResetFlags::RELEASE_RESOURCES)
                 .expect("Reset command buffer failed.");
 
-            self.device.free_memory(uniform_buffer_memory, None);
-            self.device.destroy_buffer(uniform_buffer, None);
+            self.device.free_memory(draw_uniform_buffer_memory, None);
+            self.device.destroy_buffer(draw_uniform_buffer, None);
+            self.device.free_memory(object_uniform_buffer_memory, None);
+            self.device.destroy_buffer(object_uniform_buffer, None);
+
+            // !!! Not good :) Shouldn't recreate pipeline each frame
+            self.device.destroy_pipeline(pipeline, None);
         }
     }
 
+    #[rustfmt::skip]
     pub fn destroy(&self) {
         unsafe {
             self.device.device_wait_idle().unwrap();
             for framebuffer in &self.framebuffers {
                 self.device.destroy_framebuffer(*framebuffer, None);
             }
-            match self.vertex_shader_module {
-                Some(vertex_shader_module) => self.device.destroy_shader_module(vertex_shader_module, None),
-                None => {},
-            }
-            match self.fragment_shader_module {
-                Some(fragment_shader_module) => self.device.destroy_shader_module(fragment_shader_module, None),
-                None => {},
-            }
+            if let Some(vertex_shader_module) = self.vertex_shader_module {self.device.destroy_shader_module(vertex_shader_module, None);}
+            if let Some(fragment_shader_module) = self.fragment_shader_module {self.device.destroy_shader_module(fragment_shader_module, None);}
+            if let Some(buffer_memory) = self.vertex_buffer_memory {self.device.free_memory(buffer_memory, None);}
+            if let Some(buffer) = self.vertex_buffer {self.device.destroy_buffer(buffer, None);}
+            if let Some(buffer_memory) = self.index_buffer_memory {self.device.free_memory(buffer_memory, None);}
+            if let Some(buffer) = self.index_buffer {self.device.destroy_buffer(buffer, None);}
         }
     }
 }
