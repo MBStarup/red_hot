@@ -62,7 +62,7 @@ fn main() {
                     *control_flow = ControlFlow::Exit;
                 },
                 Event::MainEventsCleared => {
-                    renderer.render_once(triangle_meshi, uniform);
+                    renderer.render(uniform, vec![triangle_meshi], vec![uniform]);
                 },
                 Event::RedrawEventsCleared => *control_flow = ControlFlow::Exit, //. "return"
                 _ => (),                                                         //. ignore other events
