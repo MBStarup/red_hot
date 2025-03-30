@@ -42,7 +42,15 @@ fn main() {
         .build(&event_loop)
         .unwrap();
 
-    let mut renderer = Renderer::<Vertex>::new(&window, window_width, window_height);
+    let mut renderer = Renderer::<Vertex, _>::new(
+        &window,
+        window_width,
+        window_height,
+        [
+            ash::vk::VertexInputAttributeDescription { location: 0, binding: 0, format: ash::vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 },
+            ash::vk::VertexInputAttributeDescription { location: 1, binding: 0, format: ash::vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 },
+        ],
+    );
     renderer.set_vertex_shader(&include_bytes!("./shader/vert.spv")[..]);
     renderer.set_fragment_shader(&include_bytes!("./shader/frag.spv")[..]);
     let triangle_meshi = renderer.register_mesh(triangle);
