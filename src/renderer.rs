@@ -1,5 +1,8 @@
 use ash::{
-    extensions::khr::{Surface, Swapchain},
+    extensions::{
+        ext::DebugUtils,
+        khr::{Surface, Swapchain},
+    },
     util::read_spv,
     vk::{
         self, AttachmentReference, Buffer, CommandBuffer, DescriptorType, DeviceMemory, Fence, Framebuffer, PhysicalDevice, PhysicalDeviceMemoryProperties, Pipeline, PipelineLayout, Queue, Rect2D,
@@ -10,7 +13,7 @@ use ash::{
 pub use ash::{Device, Instance};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
-use std::{default::Default, ffi::CStr, io::Cursor, mem, os::raw::c_char};
+use std::{borrow::Cow, default::Default, ffi::CStr, io::Cursor, mem, os::raw::c_char};
 
 use winit::window::Window;
 
@@ -85,6 +88,32 @@ where Vertex: Copy
     viewports: [vk::Viewport; 1],
 }
 
+unsafe extern "system" fn vulkan_debug_callback(
+    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
+    _user_data: *mut std::os::raw::c_void,
+) -> vk::Bool32 {
+    let callback_data = *p_callback_data;
+    let message_id_number: i32 = callback_data.message_id_number as i32;
+
+    let message_id_name = if callback_data.p_message_id_name.is_null() {
+        Cow::from("")
+    } else {
+        CStr::from_ptr(callback_data.p_message_id_name).to_string_lossy()
+    };
+
+    let message = if callback_data.p_message.is_null() {
+        Cow::from("")
+    } else {
+        CStr::from_ptr(callback_data.p_message).to_string_lossy()
+    };
+
+    println!("{:?}: {:?} [{} ({})] : {}", message_severity, message_type, message_id_name, &message_id_number.to_string(), message,);
+
+    vk::FALSE
+}
+
 impl<Vertex, const N_VERTEX_ATTRIBUTE_DESCRIPTIONS: usize> Renderer<Vertex, N_VERTEX_ATTRIBUTE_DESCRIPTIONS>
 where Vertex: Copy
 {
@@ -103,6 +132,7 @@ where Vertex: Copy
             let layers_names_raw: Vec<*const c_char> = layer_names.iter().map(|raw_name| raw_name.as_ptr()).collect(); //. Just get the afformentioned layernames as pointers, since that's what the api wants
 
             let mut extension_names = ash_window::enumerate_required_extensions(window.raw_display_handle()).unwrap().to_vec(); //. Get the list of Vulkan extensions required to use the window we have gotten, not sure what those are tho...
+            extension_names.push(DebugUtils::name().as_ptr());
 
             //# Creating instance
             let instance: Instance = entry
@@ -114,7 +144,7 @@ where Vertex: Copy
                                 .application_version(0)
                                 .engine_name(app_name)
                                 .engine_version(0)
-                                .api_version(vk::make_api_version(0, 1, 2, 0)),
+                                .api_version(vk::make_api_version(0, 1, 0, 0)),
                         )
                         .enabled_layer_names(&layers_names_raw)
                         .enabled_extension_names(&extension_names)
@@ -122,6 +152,17 @@ where Vertex: Copy
                     None,
                 )
                 .expect("Instance creation error");
+
+            //# Debug messenger callback
+            let _debug_call_back = DebugUtils::new(&entry, &instance)
+                .create_debug_utils_messenger(
+                    &vk::DebugUtilsMessengerCreateInfoEXT::builder()
+                        .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING | vk::DebugUtilsMessageSeverityFlagsEXT::INFO)
+                        .message_type(vk::DebugUtilsMessageTypeFlagsEXT::GENERAL | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE)
+                        .pfn_user_callback(Some(vulkan_debug_callback)),
+                    None,
+                )
+                .unwrap();
 
             //# Creating surface
             let surface = ash_window::create_surface(&entry, &instance, window.raw_display_handle(), window.raw_window_handle(), None).unwrap(); //. Creates the surface, i.e. the Vulkan Window, from the actual window
