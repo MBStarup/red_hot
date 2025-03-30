@@ -45,6 +45,7 @@ where Vertex: Copy
     entry: Entry,
     window_width: u32,
     window_height: u32,
+    pub clear_color: [f32; 4],
     instance: Instance,
     surface: SurfaceKHR,
     pdevice: PhysicalDevice,
@@ -386,6 +387,7 @@ where Vertex: Copy
                 entry,
                 window_width,
                 window_height,
+                clear_color: [0.0, 0.0, 0.0, 0.0],
                 instance,
                 surface,
                 pdevice,
@@ -419,6 +421,7 @@ where Vertex: Copy
     }
 
     pub fn set_vertex_shader(&mut self, shader_bytes: &[u8]) {
+        println!("Setting vertex shader");
         // TODO: Clean up old shaders if not None
         unsafe {
             self.vertex_shader_module = Some(
@@ -433,6 +436,7 @@ where Vertex: Copy
     }
 
     pub fn set_fragment_shader(&mut self, shader_bytes: &[u8]) {
+        println!("Setting fragment shader");
         // TODO: Clean up old shaders if not None
         unsafe {
             self.fragment_shader_module = Some(
@@ -447,6 +451,7 @@ where Vertex: Copy
     }
 
     pub fn register_mesh(&mut self, mesh: Mesh<Vertex>) -> MeshIndex {
+        println!("Registering mesh");
         match self.registered_meshes.last() {
             Some((last_mesh, last_index_offset, last_vertex_offset)) => {
                 self.registered_meshes.push((mesh, last_index_offset + last_mesh.indices.len() as u32, last_vertex_offset + last_mesh.vertices.len() as i32))
@@ -459,6 +464,7 @@ where Vertex: Copy
     }
 
     pub fn bind_index_buffer(&mut self) -> (vk::DeviceMemory, vk::Buffer) {
+        println!("Binding index buffer");
         unsafe {
             let index_buffer = self
                 .device
@@ -507,6 +513,7 @@ where Vertex: Copy
     }
 
     pub fn bind_vertex_buffer(&mut self) -> (vk::DeviceMemory, vk::Buffer) {
+        println!("Binding vertex buffer");
         unsafe {
             let vertex_buffer = self
                 .device
@@ -522,6 +529,12 @@ where Vertex: Copy
                 .unwrap();
 
             let vertex_buffer_memory_req = self.device.get_buffer_memory_requirements(vertex_buffer);
+            let v_size = mem::size_of::<Vertex>();
+            let v_count = self.registered_meshes.iter().fold(0, |sum, (mesh, _, _)| sum + mesh.vertices.len());
+            println!("v_count: {v_count}");
+            println!("v_size : {v_size}");
+            println!("Actual vertex data size: {}", v_size * v_count);
+            println!("Vertex Buffer mem req: {vertex_buffer_memory_req:?}");
             let vertex_buffer_memory = self
                 .device
                 .allocate_memory(
@@ -568,7 +581,7 @@ where Vertex: Copy
         unsafe {
             let (present_index, _) = self.swapchain_loader.acquire_next_image(self.swapchain, std::u64::MAX, self.present_complete_semaphore, vk::Fence::null()).unwrap();
             let clear_values = [
-                vk::ClearValue { color: vk::ClearColorValue { float32: [0.0, 0.0, 0.0, 0.0] } },
+                vk::ClearValue { color: vk::ClearColorValue { float32: self.clear_color } },
                 vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } },
             ];
 
