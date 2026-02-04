@@ -1,0 +1,13 @@
+[package]
+name = "advanced_glb_loading"
+version = "0.1.0"
+edition.workspace = true
+build = "build.rs"
+
+[dependencies]
+ash = { workspace = true }
+ash-window = { workspace = true }
+glb =  { workspace = true }
+raw-window-handle = { workspace = true }
+red_hot = { workspace = true }
+winit = { workspace = true }
