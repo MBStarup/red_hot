@@ -1,7 +1,10 @@
-use num::traits::real::Real;
+use num::{
+    traits::{float::Float, real::Real},
+    Num,
+};
 use std::{
     fmt::Display,
-    ops::{Add, AddAssign, Mul, Sub},
+    ops::{Add, AddAssign, Mul, Neg, Sub},
 };
 
 #[derive(Clone, Debug, Copy)]
@@ -38,6 +41,16 @@ where T: num::Num
             scale * self[04], scale * self[05], scale * self[06], self[07],
             scale * self[08], scale * self[09], scale * self[10], self[11],
             scale * self[12], scale * self[13], scale * self[14], self[15], // TODO: is the bottom row always [0,0,0,1]? in that case we don't need to multiply by scale
+        ].into()
+    }
+
+    #[rustfmt::skip]
+    pub fn transpose(&self) -> Mat4x4<T> where T: Copy  {
+        [
+            self[00], self[04], self[08], self[12],
+            self[01], self[05], self[09], self[13],
+            self[02], self[06], self[10], self[14],
+            self[03], self[07], self[11], self[15],
         ].into()
     }
 }
@@ -131,6 +144,14 @@ where T: num::Num + Real
     }
 }
 
+impl<T> From<[T; 3]> for Vec3<T>
+where T: num::Num + Real
+{
+    fn from(value: [T; 3]) -> Self {
+        Vec3 { x: value[0], y: value[1], z: value[2] }
+    }
+}
+
 impl<T> Vec3<T>
 where T: num::Num + Real
 {
@@ -166,8 +187,12 @@ where T: num::Num + Real
         Vec3 { x: T::zero(), y: T::zero(), z: -T::one() }
     }
 
+    pub fn size(&self) -> T {
+        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
+    }
+
     pub fn normalize(&self) -> Vec3<T> {
-        let s = (self.x * self.x + self.y * self.y + self.z * self.z).sqrt();
+        let s = self.size();
         Vec3 { x: self.x / s, y: self.y / s, z: self.z / s }
     }
 
@@ -195,6 +220,15 @@ where T: num::Num + Real
             x: self.x * transformation[0] + self.y * transformation[1] + self.z * transformation[2] + transformation[3],
             y: self.x * transformation[4] + self.y * transformation[5] + self.z * transformation[6] + transformation[7],
             z: self.x * transformation[8] + self.y * transformation[9] + self.z * transformation[10] + transformation[11],
+        }
+    }
+
+    #[rustfmt::skip]
+    pub fn lerp<U>(self, other: Vec3<T>, t: U) -> Vec3<T> where T: std::ops::Mul<U, Output = T>, U : num::Num + Copy {
+        Vec3 {
+            x: self.x * (U::one() - t) + other.x * t,
+            y: self.y * (U::one() - t) + other.y * t,
+            z: self.z * (U::one() - t) + other.z * t
         }
     }
 }
@@ -291,9 +325,48 @@ where T: num::Num + Real
     pub fn conjugate(&self) -> Quaternion<T> {
         Quaternion { x: -self.x, y: -self.y, z: -self.z, w: self.w }
     }
+
+    #[rustfmt::skip]
+    fn dot(&self, rhs: &Self) -> T {
+        self.x * rhs.x +
+        self.y * rhs.y +
+        self.z * rhs.z +
+        self.w * rhs.w
+    }
+
+    #[rustfmt::skip]
+    pub fn lerp(self, other: Quaternion<T>, t: T) -> Quaternion<T> {
+        let o = if self.dot(&other) < T::zero() {
+            -other
+        } else {
+            other
+        };
+
+        Quaternion {
+            x: self.x - t * (self.x - o.x),
+            y: self.y - t * (self.y - o.y),
+            z: self.z - t * (self.z - o.z),
+            w: self.w - t * (self.w - o.w),
+        }
+    }
+
+    fn normalize(self) -> Quaternion<T>
+    where T: num::Float {
+        self.mul(T::one() / Float::sqrt(self.dot(&self)))
+    }
 }
 
-impl<T> Mul for Quaternion<T>
+impl<T> Neg for Quaternion<T>
+where T: Num + Neg<Output = T>
+{
+    type Output = Self;
+
+    fn neg(self) -> Self {
+        Self { x: -self.x, y: -self.y, z: -self.z, w: -self.w }
+    }
+}
+
+impl<T> Mul<Quaternion<T>> for Quaternion<T>
 where T: num::Num + Copy
 {
     type Output = Quaternion<T>;
@@ -305,6 +378,16 @@ where T: num::Num + Copy
             z: self.w * rhs.z + self.x * rhs.y - self.y * rhs.x + self.z * rhs.w,
             w: self.w * rhs.w - self.x * rhs.x - self.y * rhs.y - self.z * rhs.z,
         }
+    }
+}
+
+impl<T> Mul<T> for Quaternion<T>
+where T: num::Num + Copy
+{
+    type Output = Quaternion<T>;
+
+    fn mul(self, rhs: T) -> Self::Output {
+        Quaternion { x: self.x * rhs, y: self.y * rhs, z: self.z * rhs, w: self.w * rhs }
     }
 }
 
@@ -321,6 +404,14 @@ where T: num::Num + Display
         write!(f, ", w: ")?;
         self.w.fmt(f)?;
         write!(f, "}}")
+    }
+}
+
+impl<T> From<[T; 4]> for Quaternion<T>
+where T: num::Num + Copy
+{
+    fn from(value: [T; 4]) -> Self {
+        Quaternion { x: value[0], y: value[1], z: value[2], w: value[3] }
     }
 }
 
@@ -375,5 +466,17 @@ pub fn perspective_matrix<T>(fov_angle: T, near_z: T, far_z: T) -> Mat4x4<T> whe
         T::zero(), scale,     T::zero(),                T::zero(),
         T::zero(), T::zero(), far_z / (far_z - near_z), -far_z * near_z / (far_z - near_z),
         T::zero(), T::zero(), T::one(),                 T::zero(),
+    ].into()
+}
+
+#[rustfmt::skip]
+pub fn inverse_perspective_matrix<T>(fov_angle: T, near_z: T, far_z: T) -> Mat4x4<T> where T: num::Num + Real {
+    let half = T::one() / (T::one() + T::one());
+    let scale = T::one() / (fov_angle * half).tan();
+    [
+        T::one() / scale, T::zero()       , T::zero(),                                       T::zero(),
+        T::zero(),        T::one() / scale, T::zero(),                                       T::zero(),
+        T::zero(),        T::zero(),        T::zero(),                                       T::one(),
+        T::zero(),        T::zero(),        T::one() / (-far_z * near_z / (far_z - near_z)), (-(far_z / (far_z - near_z))) / (-far_z * near_z / (far_z - near_z)),
     ].into()
 }
