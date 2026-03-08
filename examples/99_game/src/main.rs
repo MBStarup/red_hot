@@ -11,12 +11,12 @@ use glb::Gltf;
 use rand::{RngExt, SeedableRng};
 
 use red_hot::{
-    math::{perspective_matrix, Mat4x4, Quaternion, Transform, Vec3},
+    math::{inverse_perspective_matrix, perspective_matrix, Mat4x4, Quaternion, Transform, Vec3},
     renderer::{Mesh, MeshIndex, Renderer},
 };
 
 use winit::{
-    event::{DeviceEvent::MouseMotion, ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
+    event::{DeviceEvent, ElementState, Event, KeyboardInput, MouseButton, VirtualKeyCode, WindowEvent},
     event_loop::{ControlFlow, EventLoop},
     platform::run_return::EventLoopExtRunReturn,
     window::WindowBuilder,
@@ -263,6 +263,21 @@ fn animated_skeleton(Animation { name: _, animated_targets, inverse_bind_matrici
     return skeleton.try_into().unwrap();
 }
 
+//. Given normalized screen coordinates in range [-1.0, 1.-0], returns the corresponding vector from the camera position to the near-plane of the projection matrix
+fn screen_to_nearplane_offset((x, y): (f32, f32), camera_transform: &Transform<f32>, inverse_proj_mat: &Mat4x4<f32>) -> Vec3<f32> {
+    Vec3 { x, y, z: -1.0 }
+        .transform(inverse_proj_mat)
+        .transform_affine(&Transform { position: Vec3::zero(), rotation: camera_transform.rotation, scale: Vec3::one() }.get_matrix())
+}
+
+//. Given normalized screen coordinates in range [-1.0, 1.-0], returns the corresponding normalized vector from the camera into the perspective view
+fn screen_to_direction((x, y): (f32, f32), camera_transform: &Transform<f32>, inverse_proj_mat: &Mat4x4<f32>) -> Vec3<f32> {
+    let cursor_in_viewspace = Vec3 { x, y, z: -1.0 }
+        .transform(inverse_proj_mat)
+        .transform_affine(&Transform { position: Vec3::zero(), rotation: camera_transform.rotation, scale: Vec3::one() }.get_matrix());
+    (cursor_in_viewspace).normalize()
+}
+
 fn main() {
     assert_eq!(BONES_PER_VERT, 4, "VertexInputAttributeDescription not generalized");
     println!("Example 99: game");
@@ -363,11 +378,56 @@ fn main() {
         Mesh { vertices: verts, indices: index_data.iter().map(|&e| e as u32).collect() }
     }
 
+    #[rustfmt::skip]
+    let cube_mesh = {
+        let vertices = vec![
+            AnimatedVertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] }, // DOWN (LEFT/BACK)
+            AnimatedVertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] }, // DOWN (RIGHT/FRONT)
+            AnimatedVertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] }, // UP (LEFT/FRONT)
+            AnimatedVertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] }, // UP (RIGHT/BACK)
+            AnimatedVertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] }, // LEFT (FRONT/DOWN)
+            AnimatedVertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] }, // LEFT (BACK/UP)
+            AnimatedVertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] }, // RIGHT (FRONT/UP)
+            AnimatedVertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] }, // RIGHT (BACK/DOWN)
+            AnimatedVertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] }, // BACK (LEFT/DOWN)
+            AnimatedVertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] }, // BACK (RIGHT/UP)
+            AnimatedVertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] }, // FRONT (LEFT/UP)
+            AnimatedVertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] }, // FRONT (RIGHT/DOWN)
+            AnimatedVertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            ];
+        let indices = (0..vertices.len() as u32).collect();
+        Mesh::<AnimatedVertex> {vertices, indices}
+    };
+
     let mut position = Vec3 { x: 0.0, y: 0.0, z: -10.0 };
     let mut cam_yaw = 0.0;
     let mut cam_pitch = 0.0;
 
     let proj_mat = perspective_matrix(TAU / 4.0, 0.1, 10000.0);
+    let inv_proj_mat = inverse_perspective_matrix(TAU / 4.0, 0.1, 10000.0);
 
     let mut event_loop = EventLoop::new();
     let window = WindowBuilder::new()
@@ -405,6 +465,8 @@ fn main() {
     renderer.set_vertex_shader(include_bytes!("./shader/vert.spv"));
     renderer.set_fragment_shader(include_bytes!("./shader/frag.spv"));
     renderer.clear_color = [0.05, 0.01, 0.02, 1.0];
+
+    let cube_meshi = renderer.register_mesh(cube_mesh);
 
     //# Load assets from files
     struct AssetManager<'a> {
@@ -476,6 +538,9 @@ fn main() {
     let mut should_close = false;
     let mut light_dir;
     let mut light_rotation;
+    let cursor_speed = 0.003;
+    let mut cursor = (0.0, 0.0);
+    let mut dragging = false;
 
     let mut focused = false;
 
@@ -500,6 +565,8 @@ fn main() {
             rotation: Quaternion::from_axis_rotation(Vec3 { x: 0.0, y: 1.0, z: 0.0 }.normalize(), cam_yaw) * Quaternion::from_axis_rotation(Vec3 { x: -1.0, y: 0.0, z: 0.0 }.normalize(), cam_pitch),
             scale: Vec3::one(),
         };
+
+        let ray_dir = screen_to_nearplane_offset(cursor, &camera_transform, &inv_proj_mat) * 2.1; //? 2.1 has is a magic number, related to the size, to make sure all verts are in front of the near-plane
 
         event_loop.run_return(|event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
@@ -530,11 +597,17 @@ fn main() {
                     VirtualKeyCode::K => {},
                     _ => (),
                 },
-                Event::DeviceEvent { event: MouseMotion { delta: (mouse_x, mouse_y) }, .. } => {
-                    if focused {
+                Event::WindowEvent { event: WindowEvent::MouseInput { button: MouseButton::Middle, state, .. }, .. } => match state {
+                    ElementState::Pressed => dragging = true,
+                    ElementState::Released => dragging = false,
+                },
+                Event::DeviceEvent { event: DeviceEvent::MouseMotion { delta: (mouse_x, mouse_y) }, .. } => {
+                    if focused && dragging {
                         cam_yaw += mouse_x as f32 / 40.0;
                         cam_pitch += mouse_y as f32 / 40.0;
                     }
+                    let (x, y) = cursor;
+                    cursor = (f32::clamp(x + (mouse_x as f32) * cursor_speed, -1.0, 1.0), f32::clamp(y + (mouse_y as f32) * cursor_speed, -1.0, 1.0));
                 },
                 Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
                     window_width = size.width;
@@ -560,11 +633,15 @@ fn main() {
                     //# Render the objects
                     renderer.render(
                         DrawUniform { view_mat: camera_transform.get_inverse_matrix(), proj_mat, light_dir: light_dir, ambient_light: 0.5 },
-                        animated_objects.iter().map(|AnimatedObject { object, animation_handler: _ }| object.meshi).collect(),
+                        animated_objects.iter().map(|AnimatedObject { object, animation_handler: _ }| object.meshi).chain(vec![cube_meshi]).collect(),
                         animated_objects
                             .iter()
                             .enumerate()
                             .map(|(i, AnimatedObject { object, animation_handler: _ })| AnimatedObjectUniform { model_mat: object.transform.get_matrix(), skeleton: skeletons[i] })
+                            .chain(vec![AnimatedObjectUniform {
+                                model_mat: Transform { position: (camera_transform.position + ray_dir), rotation: Quaternion::<f32>::identity(), scale: Vec3::one() * 0.001 }.get_matrix(),
+                                skeleton: vec![Mat4x4::<f32>::unit(); SKELETON_SIZE].try_into().unwrap(),
+                            }])
                             .collect(),
                     );
                 },
