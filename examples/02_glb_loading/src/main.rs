@@ -9,6 +9,7 @@ use ash::vk;
 use red_hot::{
     math::{perspective_matrix, Mat4x4, Quaternion, Transform, Vec3},
     renderer::{Mesh, MeshIndex, Renderer},
+    Vertex,
 };
 
 use winit::{
@@ -72,7 +73,7 @@ fn main() {
 
     // TODO: load assets
     #[allow(dead_code)]
-    #[derive(Clone, Debug, Copy)]
+    #[derive(Clone, Debug, Copy, Vertex)]
     #[repr(C)]
     struct Vertex {
         pos: [f32; 4],
@@ -118,16 +119,7 @@ fn main() {
     window.set_cursor_grab(winit::window::CursorGrabMode::Confined).unwrap();
     window.set_cursor_visible(false);
 
-    let mut renderer = Renderer::<Vertex, _>::new(
-        &window,
-        window_width,
-        window_height,
-        [
-            vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
-            vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
-            vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
-        ],
-    );
+    let mut renderer = Renderer::<Vertex, _>::new(&window, window_width, window_height, Vertex::ATTRIBUTE_DESCRIPTIONS);
     renderer.set_vertex_shader(include_bytes!("./shader/vert.spv"));
     renderer.set_fragment_shader(include_bytes!("./shader/frag.spv"));
     let imported_meshi = renderer.register_mesh(imported_mesh);
