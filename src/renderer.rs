@@ -11,6 +11,7 @@ use ash::{
     Entry,
 };
 pub use ash::{Device, Instance};
+use glb::Accessor;
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
 use std::{borrow::Cow, default::Default, ffi::CStr, io::Cursor, mem, os::raw::c_char};
@@ -1068,5 +1069,67 @@ where Vertex: Copy
             if let Some(buffer_memory) = self.index_buffer_memory {self.device.free_memory(buffer_memory, None);}
             if let Some(buffer) = self.index_buffer {self.device.destroy_buffer(buffer, None);}
         }
+    }
+}
+
+// TODO: finish this, so you don't have to manually specify the types
+fn accessor_to_vk_format(accessor: &Accessor) -> vk::Format {
+    match accessor.accessor_type {
+        glb::AccessorType::SCALAR => match accessor.component_type {
+            glb::ComponentType::BYTE => vk::Format::R8_SINT,
+            glb::ComponentType::UNSIGNED_BYTE => vk::Format::R8_UINT,
+            glb::ComponentType::SHORT => vk::Format::R16_SINT,
+            glb::ComponentType::UNSIGNED_SHORT => vk::Format::R16_UINT,
+            glb::ComponentType::UNSIGNED_INT => vk::Format::R32_UINT,
+            glb::ComponentType::FLOAT => vk::Format::R32_SFLOAT,
+        },
+        glb::AccessorType::VEC2 => match accessor.component_type {
+            glb::ComponentType::BYTE => vk::Format::R8G8_SINT,
+            glb::ComponentType::UNSIGNED_BYTE => vk::Format::R16G16_UINT,
+            glb::ComponentType::SHORT => vk::Format::R16G16_SINT,
+            glb::ComponentType::UNSIGNED_SHORT => vk::Format::R32G32_SINT,
+            glb::ComponentType::UNSIGNED_INT => vk::Format::R32G32_SINT,
+            glb::ComponentType::FLOAT => vk::Format::R32G32_SFLOAT,
+        },
+        glb::AccessorType::VEC3 => match accessor.component_type {
+            glb::ComponentType::BYTE => vk::Format::R8G8B8_SINT,
+            glb::ComponentType::UNSIGNED_BYTE => vk::Format::R8G8B8_UINT,
+            glb::ComponentType::SHORT => vk::Format::R16G16B16_SINT,
+            glb::ComponentType::UNSIGNED_SHORT => vk::Format::R16G16B16_UINT,
+            glb::ComponentType::UNSIGNED_INT => vk::Format::R32G32B32_UINT,
+            glb::ComponentType::FLOAT => vk::Format::R32G32B32_SFLOAT,
+        },
+        glb::AccessorType::VEC4 => match accessor.component_type {
+            glb::ComponentType::BYTE => vk::Format::R8G8B8A8_SINT,
+            glb::ComponentType::UNSIGNED_BYTE => vk::Format::R8G8B8A8_UINT,
+            glb::ComponentType::SHORT => vk::Format::R16G16B16A16_SINT,
+            glb::ComponentType::UNSIGNED_SHORT => vk::Format::R16G16B16A16_UINT,
+            glb::ComponentType::UNSIGNED_INT => vk::Format::R32G32B32A32_UINT,
+            glb::ComponentType::FLOAT => vk::Format::R32G32B32A32_SFLOAT,
+        },
+        glb::AccessorType::MAT2 => match accessor.component_type {
+            glb::ComponentType::BYTE => todo!(),
+            glb::ComponentType::UNSIGNED_BYTE => todo!(),
+            glb::ComponentType::SHORT => todo!(),
+            glb::ComponentType::UNSIGNED_SHORT => todo!(),
+            glb::ComponentType::UNSIGNED_INT => todo!(),
+            glb::ComponentType::FLOAT => todo!(),
+        },
+        glb::AccessorType::MAT3 => match accessor.component_type {
+            glb::ComponentType::BYTE => todo!(),
+            glb::ComponentType::UNSIGNED_BYTE => todo!(),
+            glb::ComponentType::SHORT => todo!(),
+            glb::ComponentType::UNSIGNED_SHORT => todo!(),
+            glb::ComponentType::UNSIGNED_INT => todo!(),
+            glb::ComponentType::FLOAT => todo!(),
+        },
+        glb::AccessorType::MAT4 => match accessor.component_type {
+            glb::ComponentType::BYTE => todo!(),
+            glb::ComponentType::UNSIGNED_BYTE => todo!(),
+            glb::ComponentType::SHORT => todo!(),
+            glb::ComponentType::UNSIGNED_SHORT => todo!(),
+            glb::ComponentType::UNSIGNED_INT => todo!(),
+            glb::ComponentType::FLOAT => todo!(),
+        },
     }
 }

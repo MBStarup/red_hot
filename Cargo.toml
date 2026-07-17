@@ -7,6 +7,7 @@ edition.workspace = true
 [dependencies]
 ash = { workspace = true }
 ash-window = { workspace = true }
+glb = { workspace = true }
 num = { workspace = true }
 raw-window-handle = { workspace = true }
 winit = { workspace = true }
