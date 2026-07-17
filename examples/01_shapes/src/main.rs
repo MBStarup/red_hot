@@ -161,8 +161,7 @@ fn main() {
             vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
         ],
     );
-    renderer.set_vertex_shader(include_bytes!("./shader/vert.spv"));
-    renderer.set_fragment_shader(include_bytes!("./shader/frag.spv"));
+    let default_stage = renderer.register_stage(include_bytes!("./shader/vert.spv"), include_bytes!("./shader/frag.spv"));
     let meshes = vec![renderer.register_mesh(cube_mesh), renderer.register_mesh(pyramid_mesh), renderer.register_mesh(plane_mesh)];
 
     let mut objects: Vec<Object> = (0..200)
@@ -257,11 +256,13 @@ fn main() {
                     window.set_cursor_visible(!focus);
                 },
                 Event::MainEventsCleared => {
-                    renderer.render(
-                        DrawUniform { view_mat: camera_transform.get_inverse_matrix(), proj_mat, light_dir: light_dir, ambient_light: 0.1 },
+                    renderer.begin_render(DrawUniform { view_mat: camera_transform.get_inverse_matrix(), proj_mat, light_dir: light_dir, ambient_light: 0.1 });
+                    renderer.render_stage(
+                        default_stage,
                         objects.iter().map(|x| x.mesh).collect(),
                         objects.iter().map(|x| ObjectUniform { model_mat: x.transform.get_matrix() }).collect(),
                     );
+                    renderer.render_commit();
                 },
                 Event::RedrawEventsCleared => *control_flow = ControlFlow::Exit, //. "return"
                 _ => (),                                                         //. ignore other events
