@@ -25,6 +25,52 @@ use winit::{
 const SKELETON_SIZE: usize = 24;
 const BONES_PER_VERT: usize = 4;
 
+//# Colllsion
+#[allow(dead_code)]
+#[derive(Clone, Debug, Copy)]
+enum CollisionShape {
+    AaBox(Vec3<f32>, Vec3<f32>), //. position, size
+    Sphere(Vec3<f32>, f32),      //. position, radius
+}
+
+impl CollisionShape {
+    fn overlap(a: CollisionShape, b: CollisionShape) -> bool {
+        match a {
+            CollisionShape::AaBox(a_pos, a_size) => match b {
+                CollisionShape::AaBox(b_pos, b_size) => {
+                    //. overlap xy plane?
+                    (
+                        (a_pos.x + a_size.x) < b_pos.x
+                        || a_pos.x > (b_pos.x + b_size.x)
+                        || (a_pos.y + a_size.y) < b_pos.y
+                        || a_pos.y > (b_pos.y + b_size.y)
+                    ) &&
+                    //. overlap yz plane?
+                    (
+                        (a_pos.y + a_size.y) < b_pos.y
+                        || a_pos.y > (b_pos.y + b_size.y)
+                        || (a_pos.z + a_size.z) < b_pos.z
+                        || a_pos.z > (b_pos.z + b_size.z)
+                    ) &&
+                    //. overlap zx plane?
+                    (
+                        (a_pos.z + a_size.z) < b_pos.z
+                        || a_pos.z > (b_pos.z + b_size.z)
+                        || (a_pos.x + a_size.x) < b_pos.x
+                        || a_pos.x > (b_pos.x + b_size.x)
+                    )
+                },
+                #[rustfmt::skip]
+                CollisionShape::Sphere(b_pos, b_radius) => todo!("No mixed collision detection"),
+            },
+            CollisionShape::Sphere(a_pos, a_radius) => match b {
+                CollisionShape::AaBox(b_pos, b_size) => todo!("No mixed collision detection"),
+                CollisionShape::Sphere(b_pos, b_radius) => (a_pos - b_pos).size() < (a_radius + b_radius),
+            },
+        }
+    }
+}
+
 //# Anim loading bandaid
 // TODO: This is a stupid bandaid fix lmao
 #[allow(dead_code)]
