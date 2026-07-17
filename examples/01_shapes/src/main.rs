@@ -3,6 +3,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use rand::{RngExt, SeedableRng};
+
 use ash::vk;
 use red_hot::{
     math::{perspective_matrix, Mat4x4, Quaternion, Transform, Vec3},
@@ -33,10 +35,24 @@ fn main() {
     #[derive(Clone, Debug, Copy)]
     #[repr(C)]
     struct DrawUniform {
+        _dummy: f32,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Debug, Copy)]
+    #[repr(C)]
+    struct RenderStageUniform {
         view_mat: Mat4x4<f32>,
         proj_mat: Mat4x4<f32>,
-        light_dir: Vec3<f32>,
-        ambient_light: f32,
+        light_view_proj_mat: Mat4x4<f32>,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Debug, Copy)]
+    #[repr(C)]
+    struct ShadowStageUniform {
+        view_mat: Mat4x4<f32>,
+        proj_mat: Mat4x4<f32>,
     }
 
     #[allow(dead_code)]
@@ -44,6 +60,7 @@ fn main() {
     #[repr(C)]
     struct ObjectUniform {
         model_mat: Mat4x4<f32>,
+        is_light: u32,
     }
 
     #[rustfmt::skip]
@@ -151,30 +168,42 @@ fn main() {
     window.set_cursor_grab(winit::window::CursorGrabMode::Confined).unwrap();
     window.set_cursor_visible(false);
 
-    let mut renderer = Renderer::<Vertex, _>::new(
-        &window,
-        window_width,
-        window_height,
+    let mut renderer = Renderer::<Vertex>::new(&window, window_width, window_height);
+    let default_stage = renderer.register_stage(
+        "Default".to_owned(),
+        include_bytes!("./shader/vert.spv"),
+        include_bytes!("./shader/frag.spv"),
         [
             vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
             vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
             vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
         ],
     );
-    renderer.set_vertex_shader(include_bytes!("./shader/vert.spv"));
-    renderer.set_fragment_shader(include_bytes!("./shader/frag.spv"));
+    let shadow_stage = renderer.register_stage(
+        "Shadow".to_owned(),
+        include_bytes!("./shader/shadow_vert.spv"),
+        include_bytes!("./shader/shadow_frag.spv"),
+        [
+            vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
+            vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
+            vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
+        ],
+    );
     let meshes = vec![renderer.register_mesh(cube_mesh), renderer.register_mesh(pyramid_mesh), renderer.register_mesh(plane_mesh)];
 
-    let mut objects: Vec<Object> = (0..200)
+    let mut rng = rand::rngs::StdRng::seed_from_u64(6969);
+    let mut objects: Vec<Object> = (0..100)
         .map(|i| Object {
             transform: Transform {
-                position: Vec3 { x: 3.0 * i as f32, y: 0.0, z: 0.0 },
+                position: Vec3::<f32> { x: rng.random_range(-50.0..50.0), y: rng.random_range(-50.0..50.0), z: rng.random_range(-50.0..50.0) },
                 rotation: Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 0.0 }.normalize(), i as f32 * TAU * 0.69),
-                scale: Vec3::<f32>::one(),
+                scale: Vec3::<f32> { x: rng.random_range(1.0..3.0), y: rng.random_range(1.0..3.0), z: rng.random_range(1.0..3.0) },
             },
             mesh: meshes[i % meshes.len()],
         })
         .collect();
+    let room_box = Object { transform: Transform { scale: [100.0, 100.0, 100.0].into(), ..Transform::default() }, mesh: meshes[0] };
+    let mut light_box = Object { transform: Transform::default(), mesh: meshes[0] };
 
     renderer.clear_color = [0.09, 0.05, 0.14, 1.0];
 
@@ -184,22 +213,20 @@ fn main() {
     let mut dt = 0.01;
     let mut control = 1.0;
     let mut should_close = false;
-    let mut light_dir;
-    let mut light_rotation;
     let mut a = 1.0;
     let mut b = 1.0;
     let mut c = 1.0;
+    let light_proj_matrix = perspective_matrix(TAU / 4.0, 0.1, 200.0);
 
     let mut focused = false;
 
     while !should_close {
         //. Update the objects
         for object in &mut objects {
-            object.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 0.0, y: 1.0, z: 0.0 }.normalize(), dt) * object.transform.rotation;
+            object.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 1.0, z: 0.0 }.normalize(), 0.1 * dt) * object.transform.rotation;
         }
-
-        light_rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 0.0 }.normalize(), 1.0 + t * 1.0);
-        light_dir = (Vec3::up()).normalize().rotate(light_rotation).normalize();
+        light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 3.0, y: 2.0, z: 1.0 }.normalize(), 0.1 * dt) * light_box.transform.rotation;
+        // light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 0.0, y: 1.0, z: 0.0 }.normalize(), a);
 
         cam_pitch = f32::clamp(cam_pitch % TAU, -TAU / 4.0, TAU / 4.0);
         cam_yaw = cam_yaw % TAU;
@@ -232,12 +259,12 @@ fn main() {
                     VirtualKeyCode::E => cam_yaw += 0.3,
                     VirtualKeyCode::Key1 => control -= 0.3,
                     VirtualKeyCode::Key2 => control += 0.3,
-                    VirtualKeyCode::U => a /= 1.1,
-                    VirtualKeyCode::I => a *= 1.1,
-                    VirtualKeyCode::J => b /= 1.1,
-                    VirtualKeyCode::K => b *= 1.1,
-                    VirtualKeyCode::N => c /= 1.1,
-                    VirtualKeyCode::M => c *= 1.1,
+                    VirtualKeyCode::U => a -= 0.1,
+                    VirtualKeyCode::I => a += 0.1,
+                    VirtualKeyCode::J => b -= 0.1,
+                    VirtualKeyCode::K => b += 0.1,
+                    VirtualKeyCode::N => c -= 0.1,
+                    VirtualKeyCode::M => c += 0.1,
                     _ => (),
                 },
                 Event::DeviceEvent { event: MouseMotion { delta: (mouse_x, mouse_y) }, .. } => {
@@ -256,12 +283,41 @@ fn main() {
                     focused = focus;
                     window.set_cursor_visible(!focus);
                 },
+                #[rustfmt::skip]
                 Event::MainEventsCleared => {
-                    renderer.render(
-                        DrawUniform { view_mat: camera_transform.get_inverse_matrix(), proj_mat, light_dir: light_dir, ambient_light: 0.1 },
+                    renderer.begin_render(DrawUniform { _dummy: 69.0 });
+                    renderer.render_stage(
+                        shadow_stage,
+                        ShadowStageUniform { view_mat: light_box.transform.get_inverse_matrix(), proj_mat: light_proj_matrix },
                         objects.iter().map(|x| x.mesh).collect(),
-                        objects.iter().map(|x| ObjectUniform { model_mat: x.transform.get_matrix() }).collect(),
+                        objects.iter().map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 }).collect(),
                     );
+                    renderer.render_stage(
+                        default_stage,
+                        RenderStageUniform {
+                            // view_mat: light_box.transform.get_inverse_matrix(),
+                            view_mat: camera_transform.get_inverse_matrix(),
+                            proj_mat,
+                            light_view_proj_mat: light_proj_matrix * light_box.transform.get_inverse_matrix(),
+                        },
+                        objects
+                            .iter()
+                            .map(|x| x.mesh)
+                            .chain([
+                                room_box.mesh,
+                                light_box.mesh,
+                            ])
+                            .collect(),
+                        objects
+                            .iter()
+                            .map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 })
+                            .chain([
+                                ObjectUniform { model_mat: room_box.transform.get_matrix(), is_light: 0 },
+                                ObjectUniform { model_mat: light_box.transform.get_matrix(), is_light: 1 },
+                            ])
+                            .collect(),
+                    );
+                    renderer.render_commit();
                 },
                 Event::RedrawEventsCleared => *control_flow = ControlFlow::Exit, //. "return"
                 _ => (),                                                         //. ignore other events
