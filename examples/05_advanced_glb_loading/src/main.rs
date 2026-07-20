@@ -269,7 +269,10 @@ fn main() {
         ambient_light: f32,
     }
 
-    // BUG: if you move selected to the begining of the struct, everything is coocked, so obviously i'm not doing uniform buffers correctly LULE
+    // NOTE: Mat4x4 (and other vec4 like types) must, by std140, be 16 byte aligned. So moving `selected` to the beginning of the struct would break this
+    // NOTE: We could make Mat4x4 #[repr(align(16))], however this would force it everywhere, which is a kinda big issue when reinterpret casting from buffers of arbritrary glTF files, which will not, generally, be aligned
+    // TODO: All of this should probably be fixed along with the shader tools required for generating/verifying agreement between the shaders and the Rust code
+    // NOTE: We could also either wrap the Mat4x4 type in another, 16 byte aligned, UniformMat4x4, or add a Writer interface which is responsible for this logic. I, however, don't like either of those solutions.
     #[allow(dead_code)]
     #[derive(Clone, Debug, Copy)]
     #[repr(C)]
