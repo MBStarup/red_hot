@@ -22,7 +22,7 @@ fn main() {
     println!("Example 02: glb loading");
     let mut window_width: u32 = 2000;
     let mut window_height: u32 = 1200;
-    let mut glb_file = read("./assets/default_monkey.glb").unwrap();
+    let mut glb_file = read(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/default_monkey.glb")).unwrap();
     let gltf_data = glb::parse(&mut glb_file);
 
     // TODO: use "where" instead, or at least enforce the order

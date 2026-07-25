@@ -402,7 +402,7 @@ fn main() {
     renderer.clear_color = [0.05, 0.01, 0.02, 1.0];
 
     //# Load assets from files
-    let glb_file_paths = ["./assets/Glorp.glb", "./assets/test.glb"];
+    let glb_file_paths = [concat!(env!("CARGO_MANIFEST_DIR"), "/assets/Glorp.glb"), concat!(env!("CARGO_MANIFEST_DIR"), "/assets/test.glb")];
     let mut file_data = glb_file_paths.map(|file| read(file).unwrap());
     let gltf_datas = file_data.iter_mut().map(|gltf_file_data| glb::parse(gltf_file_data)).collect::<Vec<_>>();
 

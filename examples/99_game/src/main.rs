@@ -492,7 +492,7 @@ fn main() {
         }
     }
 
-    let glb_file_paths = ["./assets/Glorp.glb", "./assets/test.glb"];
+    let glb_file_paths = [concat!(env!("CARGO_MANIFEST_DIR"), "/assets/Glorp.glb"), concat!(env!("CARGO_MANIFEST_DIR"), "/assets/test.glb")];
     let asset_man = AssetManager::new(&glb_file_paths);
 
     //# Game?
@@ -500,7 +500,7 @@ fn main() {
     const WORM_COUNT: u32 = 100;
     let mut animated_objects: Vec<AnimatedObject> = Vec::with_capacity(WORM_COUNT as usize + 1);
 
-    let (glorp_gltf_header, glorp_gltf_buffer) = asset_man.parsed_views.get("./assets/Glorp.glb").unwrap();
+    let (glorp_gltf_header, glorp_gltf_buffer) = asset_man.parsed_views.get(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/Glorp.glb")).unwrap();
     let glorp_meshi = renderer.register_mesh(animated_vertex_mesh_from_gltf_data((&glorp_gltf_header, glorp_gltf_buffer))); // TODO: Add these to content management system mayhaps
     let glorp_animations = animations_from_gltf_data(&glorp_gltf_header, glorp_gltf_buffer); // TODO: Add these to content management system mayhaps
 
@@ -513,7 +513,7 @@ fn main() {
     };
     animated_objects.push(player);
 
-    let (worm_gltf_header, worm_gltf_buffer) = asset_man.parsed_views.get("./assets/test.glb").unwrap();
+    let (worm_gltf_header, worm_gltf_buffer) = asset_man.parsed_views.get(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/test.glb")).unwrap();
     let worm_meshi = renderer.register_mesh(animated_vertex_mesh_from_gltf_data((&worm_gltf_header, worm_gltf_buffer)));
     let worm_animations = animations_from_gltf_data(&worm_gltf_header, worm_gltf_buffer);
     for _i in 0..WORM_COUNT {
