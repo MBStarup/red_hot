@@ -50,10 +50,17 @@ struct RenderStage {
     pipeline_layout: PipelineLayout,
     // stage_descriptor_set: vk::DescriptorSet,
     object_descriptor_set: vk::DescriptorSet,
+    vertex_attribute_descriptions: Box<[VertexInputAttributeDescription]>, // NOTE[perf]: Written VERY rarely (only during setup), read rarely, only during pipeline creation/re-creation
 }
 
 impl RenderStage {
-    pub unsafe fn new(device: &Device, draw_descriptor_set_layout: vk::DescriptorSetLayout, vertex_shader_bytes: &[u8], fragment_shader_bytes: &[u8]) -> RenderStage {
+    pub unsafe fn new<const N_VERTEX_ATTRIBUTE_DESCRIPTIONS: usize>(
+        device: &Device,
+        draw_descriptor_set_layout: vk::DescriptorSetLayout,
+        vertex_shader_bytes: &[u8],
+        fragment_shader_bytes: &[u8],
+        vertex_attribute_descriptions: [VertexInputAttributeDescription; N_VERTEX_ATTRIBUTE_DESCRIPTIONS],
+    ) -> RenderStage {
         let object_descriptor_set_layout = device
             .create_descriptor_set_layout(
                 &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[*vk::DescriptorSetLayoutBinding::builder()
@@ -100,7 +107,14 @@ impl RenderStage {
             )
             .expect("Fragment shader module error");
 
-        RenderStage { graphics_pipeline: None, pipeline_layout, object_descriptor_set, vertex_shader_module, fragment_shader_module }
+        RenderStage {
+            graphics_pipeline: None,
+            pipeline_layout,
+            object_descriptor_set,
+            vertex_shader_module,
+            fragment_shader_module,
+            vertex_attribute_descriptions: Box::new(vertex_attribute_descriptions),
+        }
     }
 
     pub fn destroy_graphics_pipeline(&mut self, device: &Device) {
@@ -112,14 +126,7 @@ impl RenderStage {
         }
     }
 
-    pub unsafe fn create_graphics_pipeline<Vertex>(
-        &mut self,
-        device: &Device,
-        renderpass: RenderPass,
-        vertex_attribute_descriptions: &[VertexInputAttributeDescription],
-        window_width: u32,
-        window_height: u32,
-    ) -> Pipeline {
+    pub unsafe fn create_graphics_pipeline<Vertex>(&mut self, device: &Device, renderpass: RenderPass, window_width: u32, window_height: u32) -> Pipeline {
         // TODO: Recreate graphics pipeline on window resize
         // TODO: Check for (and remove) old graphics pipeline, in case this gets called "badly" (i.e. someone hasn't cleaned up the old first)
         println!("Creating graphics pipeline");
@@ -148,7 +155,7 @@ impl RenderStage {
                         ])
                         .vertex_input_state(
                             &vk::PipelineVertexInputStateCreateInfo::builder()
-                                .vertex_attribute_descriptions(&vertex_attribute_descriptions)
+                                .vertex_attribute_descriptions(&self.vertex_attribute_descriptions)
                                 .vertex_binding_descriptions(&[vk::VertexInputBindingDescription { binding: 0, stride: mem::size_of::<Vertex>() as u32, input_rate: vk::VertexInputRate::VERTEX }]), //? Shouldn't this use the padded size? or am I misunderstanding that? If I am, fix the functions that make the vertex/index buffer, right now it doesn't matter though, as they seem to always be the same
                         )
                         .input_assembly_state(&vk::PipelineInputAssemblyStateCreateInfo { topology: vk::PrimitiveTopology::TRIANGLE_LIST, ..Default::default() })
@@ -215,7 +222,7 @@ struct CurrentRenderInfo {
     object_uniform_memory: Vec<(Buffer, DeviceMemory)>,
 }
 
-pub struct Renderer<Vertex, const N_VERTEX_ATTRIBUTE_DESCRIPTIONS: usize>
+pub struct Renderer<Vertex>
 where Vertex: Copy
 {
     _phantom: Option<Vertex>,
@@ -239,7 +246,6 @@ where Vertex: Copy
     draw_commands_reuse_fence: Fence,
     draw_command_buffer: CommandBuffer,
     dependencies: [SubpassDependency; 1],
-    vertex_attribute_descriptions: [VertexInputAttributeDescription; N_VERTEX_ATTRIBUTE_DESCRIPTIONS],
 
     //. Things we need to clean?
     framebuffers: Vec<Framebuffer>,
@@ -289,15 +295,10 @@ unsafe extern "system" fn vulkan_debug_callback(
     vk::FALSE
 }
 
-impl<Vertex, const N_VERTEX_ATTRIBUTE_DESCRIPTIONS: usize> Renderer<Vertex, N_VERTEX_ATTRIBUTE_DESCRIPTIONS>
+impl<Vertex> Renderer<Vertex>
 where Vertex: Copy
 {
-    pub fn new(
-        window: &Window,
-        window_width: u32,
-        window_height: u32,
-        vertex_attribute_descriptions: [VertexInputAttributeDescription; N_VERTEX_ATTRIBUTE_DESCRIPTIONS],
-    ) -> Renderer<Vertex, N_VERTEX_ATTRIBUTE_DESCRIPTIONS> {
+    pub fn new(window: &Window, window_width: u32, window_height: u32) -> Renderer<Vertex> {
         unsafe {
             let entry = Entry::load().unwrap(); //. Loads the Vulkan library
 
@@ -638,7 +639,7 @@ where Vertex: Copy
                 )
                 .unwrap()[0];
 
-            Renderer::<Vertex, N_VERTEX_ATTRIBUTE_DESCRIPTIONS> {
+            Renderer::<Vertex> {
                 _phantom: None,
                 entry,
                 window_width,
@@ -650,8 +651,6 @@ where Vertex: Copy
                 device,
                 swapchain,
                 swapchain_loader,
-
-                vertex_attribute_descriptions,
 
                 framebuffers,
                 device_memory_properties,
@@ -689,8 +688,14 @@ where Vertex: Copy
         }
     }
 
-    pub fn register_stage(&mut self, vertex_shader_bytes: &[u8], fragment_shader_bytes: &[u8]) -> StageIndex {
-        self.stages.push(unsafe { RenderStage::new(&self.device, self.draw_descriptor_set_layout, vertex_shader_bytes, fragment_shader_bytes) });
+    pub fn register_stage<const N_VERTEX_ATTRIBUTE_DESCRIPTIONS: usize>(
+        &mut self,
+        vertex_shader_bytes: &[u8],
+        fragment_shader_bytes: &[u8],
+        vertex_attribute_descriptions: [VertexInputAttributeDescription; N_VERTEX_ATTRIBUTE_DESCRIPTIONS],
+    ) -> StageIndex {
+        self.stages
+            .push(unsafe { RenderStage::new(&self.device, self.draw_descriptor_set_layout, vertex_shader_bytes, fragment_shader_bytes, vertex_attribute_descriptions) });
         StageIndex(self.stages.len() - 1)
     }
 
@@ -702,7 +707,7 @@ where Vertex: Copy
         //# Re-create graphics pipeline
         for stage in &mut self.stages {
             stage.destroy_graphics_pipeline(&self.device);
-            unsafe { stage.create_graphics_pipeline::<Vertex>(&self.device, self.renderpass, &self.vertex_attribute_descriptions, self.window_width, self.window_height) };
+            unsafe { stage.create_graphics_pipeline::<Vertex>(&self.device, self.renderpass, self.window_width, self.window_height) };
         }
     }
 
@@ -940,7 +945,7 @@ where Vertex: Copy
 
         unsafe {
             let pipeline = match stage.graphics_pipeline {
-                None => stage.create_graphics_pipeline::<Vertex>(&self.device, self.renderpass, &self.vertex_attribute_descriptions, self.window_width, self.window_height),
+                None => stage.create_graphics_pipeline::<Vertex>(&self.device, self.renderpass, self.window_width, self.window_height),
                 Some(pipeline) => pipeline,
             };
 

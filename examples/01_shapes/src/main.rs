@@ -151,17 +151,16 @@ fn main() {
     window.set_cursor_grab(winit::window::CursorGrabMode::Confined).unwrap();
     window.set_cursor_visible(false);
 
-    let mut renderer = Renderer::<Vertex, _>::new(
-        &window,
-        window_width,
-        window_height,
+    let mut renderer = Renderer::<Vertex>::new(&window, window_width, window_height);
+    let default_stage = renderer.register_stage(
+        include_bytes!("./shader/vert.spv"),
+        include_bytes!("./shader/frag.spv"),
         [
             vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
             vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
             vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
         ],
     );
-    let default_stage = renderer.register_stage(include_bytes!("./shader/vert.spv"), include_bytes!("./shader/frag.spv"));
     let meshes = vec![renderer.register_mesh(cube_mesh), renderer.register_mesh(pyramid_mesh), renderer.register_mesh(plane_mesh)];
 
     let mut objects: Vec<Object> = (0..200)
