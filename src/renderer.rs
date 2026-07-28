@@ -304,6 +304,8 @@ where Vertex: Copy
     shadow_map_image: vk::Image,
     shadow_map_image_memory: vk::DeviceMemory,
     shadow_map_image_view: vk::ImageView,
+    shadow_renderpass: RenderPass,
+    shadow_framebuffer: Framebuffer,
 }
 
 unsafe extern "system" fn vulkan_debug_callback(
@@ -619,6 +621,56 @@ where Vertex: Copy
                 )
                 .unwrap();
 
+            //# Shadow renderpass — depth-only, one attachment, ends in SHADER_READ_ONLY_OPTIMAL so it's
+            //# directly sampleable afterward (no separate barrier needed on exit from this pass).
+            //# initial_layout is UNDEFINED rather than matching the swapchain depth pass's approach —
+            //# load_op is CLEAR, so prior contents/layout don't matter, and unlike the swapchain depth
+            //# attachment (whose initial/final layouts match, a fixed point across frames), this pass's
+            //# final_layout differs from what a naive initial_layout guess would be, so UNDEFINED avoids
+            //# a layout mismatch between what's declared and what's actually there each frame.
+            let shadow_depth_attachment_ref = vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+
+            let shadow_dependencies = [vk::SubpassDependency {
+                src_subpass: vk::SUBPASS_EXTERNAL,
+                src_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
+                src_access_mask: vk::AccessFlags::SHADER_READ,
+                dst_stage_mask: vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                ..Default::default()
+            }];
+
+            let shadow_renderpass = device
+                .create_render_pass(
+                    &vk::RenderPassCreateInfo::builder()
+                        .attachments(&[vk::AttachmentDescription {
+                            format: shadow_map_format,
+                            samples: vk::SampleCountFlags::TYPE_1,
+                            load_op: vk::AttachmentLoadOp::CLEAR,
+                            store_op: vk::AttachmentStoreOp::STORE,
+                            initial_layout: vk::ImageLayout::UNDEFINED,
+                            final_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                            ..Default::default()
+                        }])
+                        .subpasses(std::slice::from_ref(
+                            &vk::SubpassDescription::builder().depth_stencil_attachment(&shadow_depth_attachment_ref).pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS),
+                        ))
+                        .dependencies(&shadow_dependencies),
+                    None,
+                )
+                .unwrap();
+
+            let shadow_framebuffer = device
+                .create_framebuffer(
+                    &vk::FramebufferCreateInfo::builder()
+                        .render_pass(shadow_renderpass)
+                        .attachments(&[shadow_map_image_view])
+                        .width(shadow_map_size)
+                        .height(shadow_map_size)
+                        .layers(1),
+                    None,
+                )
+                .unwrap();
+
             let framebuffers: Vec<vk::Framebuffer> = image_views
                 .iter()
                 .map(|&image_view| {
@@ -789,6 +841,8 @@ where Vertex: Copy
                 shadow_map_image,
                 shadow_map_image_memory,
                 shadow_map_image_view,
+                shadow_renderpass,
+                shadow_framebuffer,
             }
         }
     }
