@@ -300,6 +300,10 @@ where Vertex: Copy
     renderpass: RenderPass,
     registered_meshes: Vec<(Mesh<Vertex>, u32, i32)>,
     current_render: Option<CurrentRenderInfo>,
+
+    shadow_map_image: vk::Image,
+    shadow_map_image_memory: vk::DeviceMemory,
+    shadow_map_image_view: vk::ImageView,
 }
 
 unsafe extern "system" fn vulkan_debug_callback(
@@ -560,6 +564,61 @@ where Vertex: Copy
                 )
                 .expect("Unable to bind depth image memory");
 
+            //# Shadow map depth image — separate resource from the swapchain-sized depth buffer above.
+            //# Fixed resolution (independent of window size). Usage includes SAMPLED since a later
+            //# pass needs to read this as a texture, not just write to it — has to be declared now,
+            //# can't be added to an already-created image.
+            let shadow_map_size = 2048;
+            let shadow_map_format = depth_image_format;
+
+            let shadow_map_image = device
+                .create_image(
+                    &vk::ImageCreateInfo::builder()
+                        .image_type(vk::ImageType::TYPE_2D)
+                        .format(shadow_map_format)
+                        .extent(*vk::Extent3D::builder().width(shadow_map_size).height(shadow_map_size).depth(1))
+                        .mip_levels(1)
+                        .array_layers(1)
+                        .samples(vk::SampleCountFlags::TYPE_1)
+                        .tiling(vk::ImageTiling::OPTIMAL)
+                        .usage(vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED)
+                        .sharing_mode(vk::SharingMode::EXCLUSIVE),
+                    None,
+                )
+                .unwrap();
+
+            let shadow_map_image_memory_req = device.get_image_memory_requirements(shadow_map_image);
+
+            let shadow_map_image_memory = device
+                .allocate_memory(
+                    &vk::MemoryAllocateInfo::builder().allocation_size(shadow_map_image_memory_req.size).memory_type_index(
+                        device_memory_properties.memory_types[..device_memory_properties.memory_type_count as _]
+                            .iter()
+                            .enumerate()
+                            .find(|(index, memory_type)| {
+                                (1 << index) & shadow_map_image_memory_req.memory_type_bits != 0
+                                    && memory_type.property_flags & vk::MemoryPropertyFlags::DEVICE_LOCAL == vk::MemoryPropertyFlags::DEVICE_LOCAL
+                            })
+                            .map(|(index, _memory_type)| index as _)
+                            .expect("Unable to find suitable memory index for shadow map image."),
+                    ),
+                    None,
+                )
+                .unwrap();
+
+            device.bind_image_memory(shadow_map_image, shadow_map_image_memory, 0).expect("Unable to bind shadow map image memory");
+
+            let shadow_map_image_view = device
+                .create_image_view(
+                    &vk::ImageViewCreateInfo::builder()
+                        .subresource_range(vk::ImageSubresourceRange::builder().aspect_mask(vk::ImageAspectFlags::DEPTH).level_count(1).layer_count(1).build())
+                        .image(shadow_map_image)
+                        .format(shadow_map_format)
+                        .view_type(vk::ImageViewType::TYPE_2D),
+                    None,
+                )
+                .unwrap();
+
             let framebuffers: Vec<vk::Framebuffer> = image_views
                 .iter()
                 .map(|&image_view| {
@@ -626,13 +685,22 @@ where Vertex: Copy
                 vk::DependencyFlags::empty(),
                 &[],
                 &[],
-                &[vk::ImageMemoryBarrier::builder()
-                    .image(depth_image)
-                    .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
-                    .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
-                    .old_layout(vk::ImageLayout::UNDEFINED)
-                    .subresource_range(vk::ImageSubresourceRange::builder().aspect_mask(vk::ImageAspectFlags::DEPTH).layer_count(1).level_count(1).build())
-                    .build()],
+                &[
+                    vk::ImageMemoryBarrier::builder()
+                        .image(depth_image)
+                        .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+                        .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                        .old_layout(vk::ImageLayout::UNDEFINED)
+                        .subresource_range(vk::ImageSubresourceRange::builder().aspect_mask(vk::ImageAspectFlags::DEPTH).layer_count(1).level_count(1).build())
+                        .build(),
+                    vk::ImageMemoryBarrier::builder()
+                        .image(shadow_map_image)
+                        .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+                        .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                        .old_layout(vk::ImageLayout::UNDEFINED)
+                        .subresource_range(vk::ImageSubresourceRange::builder().aspect_mask(vk::ImageAspectFlags::DEPTH).layer_count(1).level_count(1).build())
+                        .build(),
+                ],
             );
 
             device.end_command_buffer(setup_command_buffer).expect("End commandbuffer");
@@ -717,6 +785,10 @@ where Vertex: Copy
                 should_regenerate_vertex_buffer: true,
 
                 current_render: None,
+
+                shadow_map_image,
+                shadow_map_image_memory,
+                shadow_map_image_view,
             }
         }
     }
