@@ -48,7 +48,7 @@ struct RenderStage {
     fragment_shader_module: ShaderModule,
     graphics_pipeline: Option<Pipeline>,
     pipeline_layout: PipelineLayout,
-    // stage_descriptor_set: vk::DescriptorSet,
+    stage_descriptor_set: vk::DescriptorSet,
     object_descriptor_set: vk::DescriptorSet,
     vertex_attribute_descriptions: Box<[VertexInputAttributeDescription]>, // NOTE[perf]: Written VERY rarely (only during setup), read rarely, only during pipeline creation/re-creation
 }
@@ -89,8 +89,39 @@ impl RenderStage {
             )
             .unwrap()[0];
 
+        let stage_descriptor_set_layout = device
+            .create_descriptor_set_layout(
+                &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[*vk::DescriptorSetLayoutBinding::builder()
+                    .binding(0)
+                    .descriptor_type(DescriptorType::UNIFORM_BUFFER)
+                    .descriptor_count(1)
+                    .stage_flags(ShaderStageFlags::VERTEX)]),
+                None,
+            )
+            .unwrap();
+
+        let stage_descriptor_set = device
+            .allocate_descriptor_sets(
+                &vk::DescriptorSetAllocateInfo::builder()
+                    .descriptor_pool(
+                        device
+                            .create_descriptor_pool(
+                                &vk::DescriptorPoolCreateInfo::builder()
+                                    .pool_sizes(&[*vk::DescriptorPoolSize::builder().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(1 as u32)])
+                                    .max_sets(1 as u32),
+                                None,
+                            )
+                            .unwrap(),
+                    )
+                    .set_layouts(&[stage_descriptor_set_layout]),
+            )
+            .unwrap()[0];
+
         let pipeline_layout = device
-            .create_pipeline_layout(&vk::PipelineLayoutCreateInfo::builder().set_layouts(&[draw_descriptor_set_layout, object_descriptor_set_layout]), None)
+            .create_pipeline_layout(
+                &vk::PipelineLayoutCreateInfo::builder().set_layouts(&[draw_descriptor_set_layout, stage_descriptor_set_layout, object_descriptor_set_layout]),
+                None,
+            )
             .unwrap();
 
         let vertex_shader_module = device
@@ -110,6 +141,7 @@ impl RenderStage {
         RenderStage {
             graphics_pipeline: None,
             pipeline_layout,
+            stage_descriptor_set,
             object_descriptor_set,
             vertex_shader_module,
             fragment_shader_module,
@@ -220,6 +252,7 @@ struct CurrentRenderInfo {
     draw_uniform_buffer: Buffer,
     draw_uniform_buffer_memory: DeviceMemory,
     object_uniform_memory: Vec<(Buffer, DeviceMemory)>,
+    stage_uniform_memory: Vec<(Buffer, DeviceMemory)>,
 }
 
 pub struct Renderer<Vertex>
@@ -922,12 +955,15 @@ where Vertex: Copy
                 &[],
             );
 
-            self.current_render = Some(CurrentRenderInfo { present_index, draw_uniform_buffer, draw_uniform_buffer_memory, object_uniform_memory: vec![] })
+            self.current_render = Some(CurrentRenderInfo { present_index, draw_uniform_buffer, draw_uniform_buffer_memory, object_uniform_memory: vec![], stage_uniform_memory: vec![] })
         }
     }
 
-    pub fn render_stage<OU>(&mut self, stagei: StageIndex, meshis: Vec<MeshIndex>, object_uniforms: Vec<OU>)
-    where OU: Copy {
+    pub fn render_stage<SU, OU>(&mut self, stagei: StageIndex, stage_uniform: SU, meshis: Vec<MeshIndex>, object_uniforms: Vec<OU>)
+    where
+        SU: Copy,
+        OU: Copy,
+    {
         println!("Render stage");
         let scissors = [*Rect2D::builder().extent(*vk::Extent2D::builder().width(self.window_width).height(self.window_height))];
         let viewports = [vk::Viewport { x: 0.0, y: 0.0, width: self.window_width as f32, height: self.window_height as f32, min_depth: 0.0, max_depth: 1.0 }];
@@ -948,6 +984,52 @@ where Vertex: Copy
                 None => stage.create_graphics_pipeline::<Vertex>(&self.device, self.renderpass, self.window_width, self.window_height),
                 Some(pipeline) => pipeline,
             };
+
+            let stage_uniform_buffer = self
+                .device
+                .create_buffer(
+                    &vk::BufferCreateInfo { size: mem::size_of::<SU>() as u64, usage: vk::BufferUsageFlags::UNIFORM_BUFFER, sharing_mode: vk::SharingMode::EXCLUSIVE, ..Default::default() },
+                    None,
+                )
+                .unwrap();
+            let stage_uniform_buffer_memory_req = self.device.get_buffer_memory_requirements(stage_uniform_buffer);
+            let stage_uniform_buffer_memory = self
+                .device
+                .allocate_memory(
+                    &vk::MemoryAllocateInfo {
+                        allocation_size: stage_uniform_buffer_memory_req.size,
+                        memory_type_index: self.device_memory_properties.memory_types[..self.device_memory_properties.memory_type_count as _]
+                            .iter()
+                            .enumerate()
+                            .find(|(index, memory_type)| {
+                                (1 << index) & stage_uniform_buffer_memory_req.memory_type_bits != 0
+                                    && memory_type.property_flags & (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
+                                        == (vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
+                            })
+                            .map(|(index, _memory_type)| index as _)
+                            .expect("Unable to find suitable memorytype for the stage uniform buffer."),
+                        ..Default::default()
+                    },
+                    None,
+                )
+                .unwrap();
+
+            let stage_uniform_ptr = self.device.map_memory(stage_uniform_buffer_memory, 0, stage_uniform_buffer_memory_req.size, vk::MemoryMapFlags::empty()).unwrap();
+            ash::util::Align::new(stage_uniform_ptr, mem::align_of::<SU>() as u64, stage_uniform_buffer_memory_req.size).copy_from_slice(&[stage_uniform]);
+            self.device.unmap_memory(stage_uniform_buffer_memory);
+            self.device.bind_buffer_memory(stage_uniform_buffer, stage_uniform_buffer_memory, 0).unwrap();
+
+            self.device.update_descriptor_sets(
+                &[*vk::WriteDescriptorSet::builder()
+                    .dst_set(stage.stage_descriptor_set)
+                    .dst_binding(0)
+                    .dst_array_element(0)
+                    .descriptor_type(DescriptorType::UNIFORM_BUFFER)
+                    .buffer_info(&[*vk::DescriptorBufferInfo::builder().buffer(stage_uniform_buffer).offset(0).range(mem::size_of::<SU>() as u64)])],
+                &[],
+            );
+
+            current_render.stage_uniform_memory.push((stage_uniform_buffer, stage_uniform_buffer_memory));
 
             let object_uniform_stride = (((mem::size_of::<OU>() - 1) / self.min_uniform_buffer_offset_alignment) + 1) * self.min_uniform_buffer_offset_alignment; //. Always at least "align"
             let object_uniform_buffer = self
@@ -1004,15 +1086,6 @@ where Vertex: Copy
                 &[],
             );
 
-            self.device.cmd_bind_descriptor_sets(
-                self.draw_command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                stage.pipeline_layout,
-                0,
-                &[self.draw_descriptor_set, stage.object_descriptor_set],
-                &[0],
-            );
-
             {
                 self.device.cmd_begin_render_pass(self.draw_command_buffer, &render_pass_begin_info, vk::SubpassContents::INLINE);
                 self.device.cmd_bind_pipeline(self.draw_command_buffer, vk::PipelineBindPoint::GRAPHICS, pipeline);
@@ -1030,7 +1103,7 @@ where Vertex: Copy
                         vk::PipelineBindPoint::GRAPHICS,
                         stage.pipeline_layout,
                         0,
-                        &[self.draw_descriptor_set, stage.object_descriptor_set],
+                        &[self.draw_descriptor_set, stage.stage_descriptor_set, stage.object_descriptor_set],
                         &[(i * object_uniform_stride as usize) as u32],
                     );
 
@@ -1082,6 +1155,10 @@ where Vertex: Copy
             for (object_uniform_buffer, object_uniform_buffer_memory) in &current_render.object_uniform_memory {
                 self.device.free_memory(*object_uniform_buffer_memory, None);
                 self.device.destroy_buffer(*object_uniform_buffer, None);
+            }
+            for (stage_uniform_buffer, stage_uniform_buffer_memory) in &current_render.stage_uniform_memory {
+                self.device.free_memory(*stage_uniform_buffer_memory, None);
+                self.device.destroy_buffer(*stage_uniform_buffer, None);
             }
             self.current_render = None;
         }

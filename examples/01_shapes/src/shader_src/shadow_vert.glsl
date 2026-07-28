@@ -9,8 +9,6 @@ layout(set = 0, binding = 0) uniform DrawUniform {
 layout(set = 1, binding = 0) uniform StageUniform {
     mat4 view;
     mat4 proj;
-    vec3 light_dir;
-    float ambient_light;
 } stage_uniform;
 
 layout(set = 2, binding = 0) uniform ObjectUniform {
@@ -30,7 +28,4 @@ out layout(location = 0) vec4 color;
 
 void main() {
     gl_Position = in_position * object_uniform.model * stage_uniform.view * stage_uniform.proj;
-    // https://stackoverflow.com/a/14197892
-    float brightness = max(stage_uniform.ambient_light, dot(-stage_uniform.light_dir, normalize((in_normal * inverse(transpose(object_uniform.model))).xyz)));
-    color = in_color * brightness;
 }

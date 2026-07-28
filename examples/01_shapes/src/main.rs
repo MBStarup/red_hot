@@ -33,10 +33,25 @@ fn main() {
     #[derive(Clone, Debug, Copy)]
     #[repr(C)]
     struct DrawUniform {
+        _dummy: f32,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Debug, Copy)]
+    #[repr(C)]
+    struct RenderStageUniform {
         view_mat: Mat4x4<f32>,
         proj_mat: Mat4x4<f32>,
         light_dir: Vec3<f32>,
         ambient_light: f32,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Debug, Copy)]
+    #[repr(C)]
+    struct ShadowStageUniform {
+        view_mat: Mat4x4<f32>,
+        proj_mat: Mat4x4<f32>,
     }
 
     #[allow(dead_code)]
@@ -161,6 +176,15 @@ fn main() {
             vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
         ],
     );
+    let shadow_stage = renderer.register_stage(
+        include_bytes!("./shader/vert.spv"),
+        include_bytes!("./shader/frag.spv"),
+        [
+            vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
+            vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
+            vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
+        ],
+    );
     let meshes = vec![renderer.register_mesh(cube_mesh), renderer.register_mesh(pyramid_mesh), renderer.register_mesh(plane_mesh)];
 
     let mut objects: Vec<Object> = (0..200)
@@ -173,6 +197,7 @@ fn main() {
             mesh: meshes[i % meshes.len()],
         })
         .collect();
+    objects[0].transform = Transform { scale: [100.0, 100.0, 100.0].into(), ..Transform::default() };
 
     renderer.clear_color = [0.09, 0.05, 0.14, 1.0];
 
@@ -192,7 +217,7 @@ fn main() {
 
     while !should_close {
         //. Update the objects
-        for object in &mut objects {
+        for object in &mut objects[1..] {
             object.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 0.0, y: 1.0, z: 0.0 }.normalize(), dt) * object.transform.rotation;
         }
 
@@ -255,9 +280,16 @@ fn main() {
                     window.set_cursor_visible(!focus);
                 },
                 Event::MainEventsCleared => {
-                    renderer.begin_render(DrawUniform { view_mat: camera_transform.get_inverse_matrix(), proj_mat, light_dir: light_dir, ambient_light: 0.1 });
+                    renderer.begin_render(DrawUniform { _dummy: 69.0 });
+                    renderer.render_stage(
+                        shadow_stage,
+                        ShadowStageUniform { view_mat: objects[1].transform.get_inverse_matrix(), proj_mat },
+                        objects.iter().skip(2).map(|x| x.mesh).collect(),
+                        objects.iter().skip(2).map(|x| ObjectUniform { model_mat: x.transform.get_matrix() }).collect(),
+                    );
                     renderer.render_stage(
                         default_stage,
+                        RenderStageUniform { view_mat: camera_transform.get_inverse_matrix(), proj_mat, light_dir: light_dir, ambient_light: 0.1 },
                         objects.iter().map(|x| x.mesh).collect(),
                         objects.iter().map(|x| ObjectUniform { model_mat: x.transform.get_matrix() }).collect(),
                     );
