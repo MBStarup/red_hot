@@ -1138,9 +1138,19 @@ where Vertex: Copy
         SU: Copy,
         OU: Copy,
     {
-        let scissors = [*Rect2D::builder().extent(*vk::Extent2D::builder().width(self.window_width).height(self.window_height))];
-        let viewports = [vk::Viewport { x: 0.0, y: 0.0, width: self.window_width as f32, height: self.window_height as f32, min_depth: 0.0, max_depth: 1.0 }];
         let stage = &mut self.stages[stagei.0];
+        let scissors = if stage.name == "Default" {
+            [*Rect2D::builder().extent(*vk::Extent2D::builder().width(self.window_width).height(self.window_height))]
+        } else {
+            //. Shadow
+            [*Rect2D::builder().extent(*vk::Extent2D::builder().width(2048).height(2048))]
+        };
+        let viewports = if stage.name == "Default" {
+            [vk::Viewport { x: 0.0, y: 0.0, width: self.window_width as f32, height: self.window_height as f32, min_depth: 0.0, max_depth: 1.0 }]
+        } else {
+            //. Shadow
+            [vk::Viewport { x: 0.0, y: 0.0, width: 2048 as f32, height: 2048 as f32, min_depth: 0.0, max_depth: 1.0 }]
+        };
         println!("Render stage: {}", stage.name);
         let current_render = self.current_render.as_mut().expect("Call render_begin before calling render_stage");
         let clear_values = if stage.name == "Default" {
@@ -1160,7 +1170,12 @@ where Vertex: Copy
                 //. Shadow pass
                 self.shadow_framebuffer
             })
-            .render_area(*Rect2D::builder().extent(*vk::Extent2D::builder().width(self.window_width).height(self.window_height)))
+            .render_area(if stage.name == "Default" {
+                *Rect2D::builder().extent(*vk::Extent2D::builder().width(self.window_width).height(self.window_height))
+            } else {
+                //. Shadow
+                *Rect2D::builder().extent(*vk::Extent2D::builder().width(2048).height(2048))
+            })
             .clear_values(&clear_values);
 
         unsafe {

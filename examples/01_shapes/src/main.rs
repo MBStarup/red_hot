@@ -192,12 +192,12 @@ fn main() {
     let meshes = vec![renderer.register_mesh(cube_mesh), renderer.register_mesh(pyramid_mesh), renderer.register_mesh(plane_mesh)];
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(6969);
-    let mut objects: Vec<Object> = (0..900)
+    let mut objects: Vec<Object> = (0..100)
         .map(|i| Object {
             transform: Transform {
-                position: Vec3::<f32> { x: rng.random_range(-50.0..50.0), y: rng.random_range(-50.0..50.0), z: 30.0 + rng.random_range(-50.0..50.0) },
+                position: Vec3::<f32> { x: rng.random_range(-50.0..50.0), y: rng.random_range(-50.0..50.0), z: rng.random_range(-50.0..50.0) },
                 rotation: Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 0.0 }.normalize(), i as f32 * TAU * 0.69),
-                scale: Vec3::<f32>::one(),
+                scale: Vec3::<f32> { x: rng.random_range(1.0..3.0), y: rng.random_range(1.0..3.0), z: rng.random_range(1.0..3.0) },
             },
             mesh: meshes[i % meshes.len()],
         })
@@ -223,9 +223,10 @@ fn main() {
     while !should_close {
         //. Update the objects
         for object in &mut objects {
-            object.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 1.0, z: 0.0 }.normalize(), dt) * object.transform.rotation;
+            object.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 1.0, z: 0.0 }.normalize(), 0.1 * dt) * object.transform.rotation;
         }
-        light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 1.0, z: 0.0 }.normalize(), dt) * light_box.transform.rotation;
+        light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 3.0, y: 2.0, z: 1.0 }.normalize(), 0.1 * dt) * light_box.transform.rotation;
+        // light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 0.0, y: 1.0, z: 0.0 }.normalize(), a);
 
         cam_pitch = f32::clamp(cam_pitch % TAU, -TAU / 4.0, TAU / 4.0);
         cam_yaw = cam_yaw % TAU;
@@ -258,12 +259,12 @@ fn main() {
                     VirtualKeyCode::E => cam_yaw += 0.3,
                     VirtualKeyCode::Key1 => control -= 0.3,
                     VirtualKeyCode::Key2 => control += 0.3,
-                    VirtualKeyCode::U => a /= 1.1,
-                    VirtualKeyCode::I => a *= 1.1,
-                    VirtualKeyCode::J => b /= 1.1,
-                    VirtualKeyCode::K => b *= 1.1,
-                    VirtualKeyCode::N => c /= 1.1,
-                    VirtualKeyCode::M => c *= 1.1,
+                    VirtualKeyCode::U => a -= 0.1,
+                    VirtualKeyCode::I => a += 0.1,
+                    VirtualKeyCode::J => b -= 0.1,
+                    VirtualKeyCode::K => b += 0.1,
+                    VirtualKeyCode::N => c -= 0.1,
+                    VirtualKeyCode::M => c += 0.1,
                     _ => (),
                 },
                 Event::DeviceEvent { event: MouseMotion { delta: (mouse_x, mouse_y) }, .. } => {
@@ -294,8 +295,8 @@ fn main() {
                     renderer.render_stage(
                         default_stage,
                         RenderStageUniform {
-                            view_mat: light_box.transform.get_inverse_matrix(),
-                            // view_mat: camera_transform.get_inverse_matrix(),
+                            // view_mat: light_box.transform.get_inverse_matrix(),
+                            view_mat: camera_transform.get_inverse_matrix(),
                             proj_mat,
                             light_view_proj_mat: light_proj_matrix * light_box.transform.get_inverse_matrix(),
                         },
@@ -304,7 +305,7 @@ fn main() {
                             .map(|x| x.mesh)
                             .chain([
                                 room_box.mesh,
-                                // light_box.mesh,
+                                light_box.mesh,
                             ])
                             .collect(),
                         objects
@@ -312,7 +313,7 @@ fn main() {
                             .map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 })
                             .chain([
                                 ObjectUniform { model_mat: room_box.transform.get_matrix(), is_light: 0 },
-                                // ObjectUniform { model_mat: light_box.transform.get_matrix(), is_light: 1 },
+                                ObjectUniform { model_mat: light_box.transform.get_matrix(), is_light: 1 },
                             ])
                             .collect(),
                     );
