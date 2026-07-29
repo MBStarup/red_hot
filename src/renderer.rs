@@ -5,15 +5,16 @@ use ash::{
     },
     util::read_spv,
     vk::{
-        self, AttachmentReference, Buffer, CommandBuffer, DescriptorType, DeviceMemory, Fence, Framebuffer, PhysicalDevice, PhysicalDeviceMemoryProperties, Pipeline, PipelineLayout, Queue, Rect2D,
-        RenderPass, Semaphore, ShaderModule, ShaderStageFlags, SubpassDependency, SurfaceFormatKHR, SurfaceKHR, SwapchainKHR, VertexInputAttributeDescription,
+        self, AttachmentReference, Buffer, CommandBuffer, CompareOp, DescriptorType, DeviceMemory, Fence, Framebuffer, PhysicalDevice, PhysicalDeviceMemoryProperties, Pipeline, PipelineLayout, Queue,
+        Rect2D, RenderPass, SamplerCreateInfo, SamplerCreateInfoBuilder, Semaphore, ShaderModule, ShaderStageFlags, SubpassDependency, SurfaceFormatKHR, SurfaceKHR, SwapchainKHR,
+        VertexInputAttributeDescription,
     },
     Entry,
 };
 pub use ash::{Device, Instance};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
-use std::{borrow::Cow, default::Default, ffi::CStr, io::Cursor, mem, os::raw::c_char};
+use std::{borrow::Cow, default::Default, ffi::CStr, io::Cursor, mem, os::raw::c_char, todo};
 
 use winit::window::Window;
 
@@ -44,6 +45,7 @@ where Vertex: Copy
 }
 
 struct RenderStage {
+    name: String,
     vertex_shader_module: ShaderModule,
     fragment_shader_module: ShaderModule,
     graphics_pipeline: Option<Pipeline>,
@@ -51,15 +53,18 @@ struct RenderStage {
     stage_descriptor_set: vk::DescriptorSet,
     object_descriptor_set: vk::DescriptorSet,
     vertex_attribute_descriptions: Box<[VertexInputAttributeDescription]>, // NOTE[perf]: Written VERY rarely (only during setup), read rarely, only during pipeline creation/re-creation
+    render_pass: RenderPass,                                               // TODO: Convert to buffer backed index system , to allow reuse
 }
 
 impl RenderStage {
     pub unsafe fn new<const N_VERTEX_ATTRIBUTE_DESCRIPTIONS: usize>(
+        name: String,
         device: &Device,
         draw_descriptor_set_layout: vk::DescriptorSetLayout,
         vertex_shader_bytes: &[u8],
         fragment_shader_bytes: &[u8],
         vertex_attribute_descriptions: [VertexInputAttributeDescription; N_VERTEX_ATTRIBUTE_DESCRIPTIONS],
+        render_pass: RenderPass,
     ) -> RenderStage {
         let object_descriptor_set_layout = device
             .create_descriptor_set_layout(
@@ -91,11 +96,18 @@ impl RenderStage {
 
         let stage_descriptor_set_layout = device
             .create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[*vk::DescriptorSetLayoutBinding::builder()
-                    .binding(0)
-                    .descriptor_type(DescriptorType::UNIFORM_BUFFER)
-                    .descriptor_count(1)
-                    .stage_flags(ShaderStageFlags::VERTEX)]),
+                &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[
+                    *vk::DescriptorSetLayoutBinding::builder()
+                        .binding(0)
+                        .descriptor_type(DescriptorType::UNIFORM_BUFFER)
+                        .descriptor_count(1)
+                        .stage_flags(ShaderStageFlags::VERTEX),
+                    *vk::DescriptorSetLayoutBinding::builder() //. Shadow map
+                        .binding(1)
+                        .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
+                        .descriptor_count(1)
+                        .stage_flags(vk::ShaderStageFlags::FRAGMENT),
+                ]),
                 None,
             )
             .unwrap();
@@ -107,7 +119,10 @@ impl RenderStage {
                         device
                             .create_descriptor_pool(
                                 &vk::DescriptorPoolCreateInfo::builder()
-                                    .pool_sizes(&[*vk::DescriptorPoolSize::builder().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(1 as u32)])
+                                    .pool_sizes(&[
+                                        *vk::DescriptorPoolSize::builder().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(1 as u32),
+                                        *vk::DescriptorPoolSize::builder().ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER).descriptor_count(1), //. Shadow map
+                                    ])
                                     .max_sets(1 as u32),
                                 None,
                             )
@@ -139,6 +154,7 @@ impl RenderStage {
             .expect("Fragment shader module error");
 
         RenderStage {
+            name,
             graphics_pipeline: None,
             pipeline_layout,
             stage_descriptor_set,
@@ -146,6 +162,7 @@ impl RenderStage {
             vertex_shader_module,
             fragment_shader_module,
             vertex_attribute_descriptions: Box::new(vertex_attribute_descriptions),
+            render_pass,
         }
     }
 
@@ -158,7 +175,7 @@ impl RenderStage {
         }
     }
 
-    pub unsafe fn create_graphics_pipeline<Vertex>(&mut self, device: &Device, renderpass: RenderPass, window_width: u32, window_height: u32) -> Pipeline {
+    pub unsafe fn create_graphics_pipeline<Vertex>(&mut self, device: &Device, window_width: u32, window_height: u32) -> Pipeline {
         // TODO: Recreate graphics pipeline on window resize
         // TODO: Check for (and remove) old graphics pipeline, in case this gets called "badly" (i.e. someone hasn't cleaned up the old first)
         println!("Creating graphics pipeline");
@@ -202,7 +219,7 @@ impl RenderStage {
                         .depth_stencil_state(&vk::PipelineDepthStencilStateCreateInfo {
                             depth_test_enable: 1,
                             depth_write_enable: 1,
-                            depth_compare_op: vk::CompareOp::LESS_OR_EQUAL,
+                            depth_compare_op: vk::CompareOp::LESS,
                             front: vk::StencilOpState {
                                 fail_op: vk::StencilOp::KEEP,
                                 pass_op: vk::StencilOp::KEEP,
@@ -220,8 +237,8 @@ impl RenderStage {
                             max_depth_bounds: 1.0,
                             ..Default::default()
                         })
-                        .color_blend_state(
-                            &vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
+                        .color_blend_state(&vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(if self.name == "Default" {
+                            &[vk::PipelineColorBlendAttachmentState {
                                 blend_enable: 0,
                                 src_color_blend_factor: vk::BlendFactor::SRC_COLOR,
                                 dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_DST_COLOR,
@@ -230,11 +247,14 @@ impl RenderStage {
                                 dst_alpha_blend_factor: vk::BlendFactor::ZERO,
                                 alpha_blend_op: vk::BlendOp::ADD,
                                 color_write_mask: vk::ColorComponentFlags::RGBA,
-                            }]),
-                        )
+                            }]
+                        } else {
+                            //. Shadow
+                            &[]
+                        }))
                         .dynamic_state(&vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]))
                         .layout(self.pipeline_layout)
-                        .render_pass(renderpass)
+                        .render_pass(self.render_pass)
                         .build()],
                     None,
                 )
@@ -304,6 +324,7 @@ where Vertex: Copy
     shadow_map_image: vk::Image,
     shadow_map_image_memory: vk::DeviceMemory,
     shadow_map_image_view: vk::ImageView,
+    shadow_map_image_sampler: vk::Sampler,
     shadow_renderpass: RenderPass,
     shadow_framebuffer: Framebuffer,
 }
@@ -571,7 +592,7 @@ where Vertex: Copy
             //# pass needs to read this as a texture, not just write to it — has to be declared now,
             //# can't be added to an already-created image.
             let shadow_map_size = 2048;
-            let shadow_map_format = depth_image_format;
+            let shadow_map_format = vk::Format::D16_UNORM;
 
             let shadow_map_image = device
                 .create_image(
@@ -628,17 +649,6 @@ where Vertex: Copy
             //# attachment (whose initial/final layouts match, a fixed point across frames), this pass's
             //# final_layout differs from what a naive initial_layout guess would be, so UNDEFINED avoids
             //# a layout mismatch between what's declared and what's actually there each frame.
-            let shadow_depth_attachment_ref = vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
-
-            let shadow_dependencies = [vk::SubpassDependency {
-                src_subpass: vk::SUBPASS_EXTERNAL,
-                src_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
-                src_access_mask: vk::AccessFlags::SHADER_READ,
-                dst_stage_mask: vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS | vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
-                dst_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
-                ..Default::default()
-            }];
-
             let shadow_renderpass = device
                 .create_render_pass(
                     &vk::RenderPassCreateInfo::builder()
@@ -652,9 +662,19 @@ where Vertex: Copy
                             ..Default::default()
                         }])
                         .subpasses(std::slice::from_ref(
-                            &vk::SubpassDescription::builder().depth_stencil_attachment(&shadow_depth_attachment_ref).pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS),
+                            &vk::SubpassDescription::builder()
+                                .depth_stencil_attachment(&vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL })
+                                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS),
                         ))
-                        .dependencies(&shadow_dependencies),
+                        .dependencies(&[vk::SubpassDependency {
+                            src_subpass: 0,
+                            dst_subpass: vk::SUBPASS_EXTERNAL,
+                            src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                            src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                            dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
+                            dst_access_mask: vk::AccessFlags::SHADER_READ,
+                            ..Default::default()
+                        }]),
                     None,
                 )
                 .unwrap();
@@ -667,6 +687,18 @@ where Vertex: Copy
                         .width(shadow_map_size)
                         .height(shadow_map_size)
                         .layers(1),
+                    None,
+                )
+                .unwrap();
+
+            let shadow_map_image_sampler = device
+                .create_sampler(
+                    &vk::SamplerCreateInfo::builder()
+                        .compare_enable(true)
+                        .compare_op(vk::CompareOp::LESS_OR_EQUAL)
+                        .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                        .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                        .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE),
                     None,
                 )
                 .unwrap();
@@ -732,8 +764,8 @@ where Vertex: Copy
 
             device.cmd_pipeline_barrier(
                 setup_command_buffer,
-                vk::PipelineStageFlags::BOTTOM_OF_PIPE,
-                vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                vk::PipelineStageFlags::TOP_OF_PIPE,
+                vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
                 vk::DependencyFlags::empty(),
                 &[],
                 &[],
@@ -841,6 +873,7 @@ where Vertex: Copy
                 shadow_map_image,
                 shadow_map_image_memory,
                 shadow_map_image_view,
+                shadow_map_image_sampler,
                 shadow_renderpass,
                 shadow_framebuffer,
             }
@@ -849,12 +882,27 @@ where Vertex: Copy
 
     pub fn register_stage<const N_VERTEX_ATTRIBUTE_DESCRIPTIONS: usize>(
         &mut self,
+        name: String,
         vertex_shader_bytes: &[u8],
         fragment_shader_bytes: &[u8],
         vertex_attribute_descriptions: [VertexInputAttributeDescription; N_VERTEX_ATTRIBUTE_DESCRIPTIONS],
     ) -> StageIndex {
-        self.stages
-            .push(unsafe { RenderStage::new(&self.device, self.draw_descriptor_set_layout, vertex_shader_bytes, fragment_shader_bytes, vertex_attribute_descriptions) });
+        let render_pass = match name.as_str() {
+            "Default" => self.renderpass,
+            "Shadow" => self.shadow_renderpass,
+            _ => todo!("This is hardcoded for exploration purposes atm"),
+        };
+        self.stages.push(unsafe {
+            RenderStage::new(
+                name,
+                &self.device,
+                self.draw_descriptor_set_layout,
+                vertex_shader_bytes,
+                fragment_shader_bytes,
+                vertex_attribute_descriptions,
+                render_pass,
+            )
+        });
         StageIndex(self.stages.len() - 1)
     }
 
@@ -866,7 +914,7 @@ where Vertex: Copy
         //# Re-create graphics pipeline
         for stage in &mut self.stages {
             stage.destroy_graphics_pipeline(&self.device);
-            unsafe { stage.create_graphics_pipeline::<Vertex>(&self.device, self.renderpass, self.window_width, self.window_height) };
+            unsafe { stage.create_graphics_pipeline::<Vertex>(&self.device, self.window_width, self.window_height) };
         }
     }
 
@@ -1090,24 +1138,46 @@ where Vertex: Copy
         SU: Copy,
         OU: Copy,
     {
-        println!("Render stage");
         let scissors = [*Rect2D::builder().extent(*vk::Extent2D::builder().width(self.window_width).height(self.window_height))];
         let viewports = [vk::Viewport { x: 0.0, y: 0.0, width: self.window_width as f32, height: self.window_height as f32, min_depth: 0.0, max_depth: 1.0 }];
         let stage = &mut self.stages[stagei.0];
+        println!("Render stage: {}", stage.name);
         let current_render = self.current_render.as_mut().expect("Call render_begin before calling render_stage");
-        let clear_values = vec![
-            vk::ClearValue { color: vk::ClearColorValue { float32: self.clear_color } },
-            vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } },
-        ];
+        let clear_values = if stage.name == "Default" {
+            vec![
+                vk::ClearValue { color: vk::ClearColorValue { float32: self.clear_color } },
+                vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } },
+            ]
+        } else {
+            //. Shadow
+            vec![vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } }]
+        };
         let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
-            .render_pass(self.renderpass)
-            .framebuffer(self.framebuffers[current_render.present_index as usize])
+            .render_pass(stage.render_pass)
+            .framebuffer(if stage.name == "Default" {
+                self.framebuffers[current_render.present_index as usize]
+            } else {
+                //. Shadow pass
+                self.shadow_framebuffer
+            })
             .render_area(*Rect2D::builder().extent(*vk::Extent2D::builder().width(self.window_width).height(self.window_height)))
             .clear_values(&clear_values);
 
         unsafe {
             let pipeline = match stage.graphics_pipeline {
-                None => stage.create_graphics_pipeline::<Vertex>(&self.device, self.renderpass, self.window_width, self.window_height),
+                None => stage.create_graphics_pipeline::<Vertex>(
+                    &self.device,
+                    if stage.name == "Shadow" {
+                        2048 //. Shadow map size
+                    } else {
+                        self.window_width
+                    },
+                    if stage.name == "Shadow" {
+                        2048 //. Shadow map size
+                    } else {
+                        self.window_height
+                    },
+                ),
                 Some(pipeline) => pipeline,
             };
 
@@ -1156,6 +1226,19 @@ where Vertex: Copy
             );
 
             current_render.stage_uniform_memory.push((stage_uniform_buffer, stage_uniform_buffer_memory));
+
+            self.device.update_descriptor_sets(
+                &[*vk::WriteDescriptorSet::builder()
+                    .dst_set(stage.stage_descriptor_set)
+                    .dst_binding(1)
+                    .dst_array_element(0)
+                    .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
+                    .image_info(&[*vk::DescriptorImageInfo::builder()
+                        .sampler(self.shadow_map_image_sampler)
+                        .image_view(self.shadow_map_image_view)
+                        .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)])],
+                &[],
+            );
 
             let object_uniform_stride = (((mem::size_of::<OU>() - 1) / self.min_uniform_buffer_offset_alignment) + 1) * self.min_uniform_buffer_offset_alignment; //. Always at least "align"
             let object_uniform_buffer = self
@@ -1237,6 +1320,26 @@ where Vertex: Copy
                 }
 
                 self.device.cmd_end_render_pass(self.draw_command_buffer);
+
+                // if stage.name == "Shadow" {
+                //     //. Shadow
+                //     self.device.cmd_pipeline_barrier(
+                //         self.draw_command_buffer,
+                //         vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                //         vk::PipelineStageFlags::FRAGMENT_SHADER,
+                //         vk::DependencyFlags::empty(),
+                //         &[],
+                //         &[],
+                //         &[vk::ImageMemoryBarrier::builder()
+                //             .image(self.shadow_map_image)
+                //             .src_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
+                //             .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                //             .old_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+                //             .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                //             .subresource_range(vk::ImageSubresourceRange::builder().aspect_mask(vk::ImageAspectFlags::DEPTH).level_count(1).layer_count(1).build())
+                //             .build()],
+                //     );
+                // }
             }
 
             current_render.object_uniform_memory.push((object_uniform_buffer, object_uniform_buffer_memory));

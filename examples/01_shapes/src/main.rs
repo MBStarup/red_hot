@@ -3,6 +3,8 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use rand::{RngExt, SeedableRng};
+
 use ash::vk;
 use red_hot::{
     math::{perspective_matrix, Mat4x4, Quaternion, Transform, Vec3},
@@ -42,8 +44,7 @@ fn main() {
     struct RenderStageUniform {
         view_mat: Mat4x4<f32>,
         proj_mat: Mat4x4<f32>,
-        light_dir: Vec3<f32>,
-        ambient_light: f32,
+        light_view_proj_mat: Mat4x4<f32>,
     }
 
     #[allow(dead_code)]
@@ -59,6 +60,7 @@ fn main() {
     #[repr(C)]
     struct ObjectUniform {
         model_mat: Mat4x4<f32>,
+        is_light: u32,
     }
 
     #[rustfmt::skip]
@@ -168,6 +170,7 @@ fn main() {
 
     let mut renderer = Renderer::<Vertex>::new(&window, window_width, window_height);
     let default_stage = renderer.register_stage(
+        "Default".to_owned(),
         include_bytes!("./shader/vert.spv"),
         include_bytes!("./shader/frag.spv"),
         [
@@ -177,8 +180,9 @@ fn main() {
         ],
     );
     let shadow_stage = renderer.register_stage(
-        include_bytes!("./shader/vert.spv"),
-        include_bytes!("./shader/frag.spv"),
+        "Shadow".to_owned(),
+        include_bytes!("./shader/shadow_vert.spv"),
+        include_bytes!("./shader/shadow_frag.spv"),
         [
             vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
             vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
@@ -187,17 +191,19 @@ fn main() {
     );
     let meshes = vec![renderer.register_mesh(cube_mesh), renderer.register_mesh(pyramid_mesh), renderer.register_mesh(plane_mesh)];
 
-    let mut objects: Vec<Object> = (0..200)
+    let mut rng = rand::rngs::StdRng::seed_from_u64(6969);
+    let mut objects: Vec<Object> = (0..900)
         .map(|i| Object {
             transform: Transform {
-                position: Vec3 { x: 3.0 * i as f32, y: 0.0, z: 0.0 },
+                position: Vec3::<f32> { x: rng.random_range(-50.0..50.0), y: rng.random_range(-50.0..50.0), z: 30.0 + rng.random_range(-50.0..50.0) },
                 rotation: Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 0.0 }.normalize(), i as f32 * TAU * 0.69),
                 scale: Vec3::<f32>::one(),
             },
             mesh: meshes[i % meshes.len()],
         })
         .collect();
-    objects[0].transform = Transform { scale: [100.0, 100.0, 100.0].into(), ..Transform::default() };
+    let room_box = Object { transform: Transform { scale: [100.0, 100.0, 100.0].into(), ..Transform::default() }, mesh: meshes[0] };
+    let mut light_box = Object { transform: Transform::default(), mesh: meshes[0] };
 
     renderer.clear_color = [0.09, 0.05, 0.14, 1.0];
 
@@ -207,22 +213,19 @@ fn main() {
     let mut dt = 0.01;
     let mut control = 1.0;
     let mut should_close = false;
-    let mut light_dir;
-    let mut light_rotation;
     let mut a = 1.0;
     let mut b = 1.0;
     let mut c = 1.0;
+    let light_proj_matrix = perspective_matrix(TAU / 4.0, 0.1, 200.0);
 
     let mut focused = false;
 
     while !should_close {
         //. Update the objects
-        for object in &mut objects[1..] {
-            object.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 0.0, y: 1.0, z: 0.0 }.normalize(), dt) * object.transform.rotation;
+        for object in &mut objects {
+            object.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 1.0, z: 0.0 }.normalize(), dt) * object.transform.rotation;
         }
-
-        light_rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 0.0 }.normalize(), 1.0 + t * 1.0);
-        light_dir = (Vec3::up()).normalize().rotate(light_rotation).normalize();
+        light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 1.0, z: 0.0 }.normalize(), dt) * light_box.transform.rotation;
 
         cam_pitch = f32::clamp(cam_pitch % TAU, -TAU / 4.0, TAU / 4.0);
         cam_yaw = cam_yaw % TAU;
@@ -279,19 +282,39 @@ fn main() {
                     focused = focus;
                     window.set_cursor_visible(!focus);
                 },
+                #[rustfmt::skip]
                 Event::MainEventsCleared => {
                     renderer.begin_render(DrawUniform { _dummy: 69.0 });
                     renderer.render_stage(
                         shadow_stage,
-                        ShadowStageUniform { view_mat: objects[1].transform.get_inverse_matrix(), proj_mat },
-                        objects.iter().skip(2).map(|x| x.mesh).collect(),
-                        objects.iter().skip(2).map(|x| ObjectUniform { model_mat: x.transform.get_matrix() }).collect(),
+                        ShadowStageUniform { view_mat: light_box.transform.get_inverse_matrix(), proj_mat: light_proj_matrix },
+                        objects.iter().map(|x| x.mesh).collect(),
+                        objects.iter().map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 }).collect(),
                     );
                     renderer.render_stage(
                         default_stage,
-                        RenderStageUniform { view_mat: camera_transform.get_inverse_matrix(), proj_mat, light_dir: light_dir, ambient_light: 0.1 },
-                        objects.iter().map(|x| x.mesh).collect(),
-                        objects.iter().map(|x| ObjectUniform { model_mat: x.transform.get_matrix() }).collect(),
+                        RenderStageUniform {
+                            view_mat: light_box.transform.get_inverse_matrix(),
+                            // view_mat: camera_transform.get_inverse_matrix(),
+                            proj_mat,
+                            light_view_proj_mat: light_proj_matrix * light_box.transform.get_inverse_matrix(),
+                        },
+                        objects
+                            .iter()
+                            .map(|x| x.mesh)
+                            .chain([
+                                room_box.mesh,
+                                // light_box.mesh,
+                            ])
+                            .collect(),
+                        objects
+                            .iter()
+                            .map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 })
+                            .chain([
+                                ObjectUniform { model_mat: room_box.transform.get_matrix(), is_light: 0 },
+                                // ObjectUniform { model_mat: light_box.transform.get_matrix(), is_light: 1 },
+                            ])
+                            .collect(),
                     );
                     renderer.render_commit();
                 },
