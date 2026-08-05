@@ -19,224 +19,343 @@ use winit::{
 };
 
 fn main() {
-    println!("Example 01: shapes");
-    let mut window_width: u32 = 2000;
-    let mut window_height: u32 = 1200;
+    unsafe {
+        println!("Example 01: shapes");
+        let mut window_width: u32 = 2000;
+        let mut window_height: u32 = 1200;
 
-    #[derive(Clone, Debug, Copy)]
-    #[repr(C)]
-    struct Vertex {
-        pos: [f32; 4],
-        normal: [f32; 4],
-        color: [f32; 4],
-    }
-
-    #[allow(dead_code)]
-    #[derive(Clone, Debug, Copy)]
-    #[repr(C)]
-    struct DrawUniform {
-        _dummy: f32,
-    }
-
-    #[allow(dead_code)]
-    #[derive(Clone, Debug, Copy)]
-    #[repr(C)]
-    struct RenderStageUniform {
-        view_mat: Mat4x4<f32>,
-        proj_mat: Mat4x4<f32>,
-        light_view_proj_mat: Mat4x4<f32>,
-    }
-
-    #[allow(dead_code)]
-    #[derive(Clone, Debug, Copy)]
-    #[repr(C)]
-    struct ShadowStageUniform {
-        view_mat: Mat4x4<f32>,
-        proj_mat: Mat4x4<f32>,
-    }
-
-    #[allow(dead_code)]
-    #[derive(Clone, Debug, Copy)]
-    #[repr(C)]
-    struct ObjectUniform {
-        model_mat: Mat4x4<f32>,
-        is_light: u32,
-    }
-
-    #[rustfmt::skip]
-    let pyramid_mesh = {
-        let vertices = vec![
-            Vertex { pos: [-1.0,  0.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
-            Vertex { pos: [ 1.0,  0.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] }, //. DOWN (RIGHT/BACK)
-            Vertex { pos: [ 1.0,  0.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
-            Vertex { pos: [-1.0,  0.0,  1.0, 1.0], normal: [-1.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
-            Vertex { pos: [ 0.0,  1.0,  0.0, 1.0], normal: [-1.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] }, //. LEFT
-            Vertex { pos: [-1.0,  0.0, -1.0, 1.0], normal: [-1.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
-            Vertex { pos: [-1.0,  0.0, -1.0, 1.0], normal: [ 0.0,  1.0, -1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
-            Vertex { pos: [ 0.0,  1.0,  0.0, 1.0], normal: [ 0.0,  1.0, -1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] }, //. FRONT
-            Vertex { pos: [ 1.0,  0.0, -1.0, 1.0], normal: [ 0.0,  1.0, -1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
-            Vertex { pos: [ 1.0,  0.0, -1.0, 1.0], normal: [ 1.0,  1.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
-            Vertex { pos: [ 0.0,  1.0,  0.0, 1.0], normal: [ 1.0,  1.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] }, //. RIGHT
-            Vertex { pos: [ 1.0,  0.0,  1.0, 1.0], normal: [ 1.0,  1.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
-            Vertex { pos: [ 1.0,  0.0,  1.0, 1.0], normal: [ 0.0,  1.0,  1.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
-            Vertex { pos: [ 0.0,  1.0,  0.0, 1.0], normal: [ 0.0,  1.0,  1.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. BACKWARDS
-            Vertex { pos: [-1.0,  0.0,  1.0, 1.0], normal: [ 0.0,  1.0,  1.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
-            Vertex { pos: [-1.0,  0.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
-            Vertex { pos: [ 1.0,  0.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] }, //. DOWN (LEFT/FRONT)
-            Vertex { pos: [-1.0,  0.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
-            ];
-        let indices = (0..vertices.len() as u32).collect();
-        Mesh::<Vertex> {vertices, indices}
-    };
-
-    #[rustfmt::skip]
-    let cube_mesh = {
-        let vertices = vec![
-            Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
-            Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. DOWN (LEFT/BACK)
-            Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
-            Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
-            Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. DOWN (RIGHT/FRONT)
-            Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
-            Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
-            Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] }, //. UP (LEFT/FRONT)
-            Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
-            Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
-            Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] }, //. UP (RIGHT/BACK)
-            Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
-            Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
-            Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] }, //. LEFT (FRONT/DOWN)
-            Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
-            Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
-            Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] }, //. LEFT (BACK/UP)
-            Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
-            Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
-            Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] }, //. RIGHT (FRONT/UP)
-            Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
-            Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
-            Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] }, //. RIGHT (BACK/DOWN)
-            Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
-            Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
-            Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] }, //. BACK (LEFT/DOWN)
-            Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
-            Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
-            Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] }, //. BACK (RIGHT/UP)
-            Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
-            Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
-            Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] }, //. FRONT (LEFT/UP)
-            Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
-            Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
-            Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] }, //. FRONT (RIGHT/DOWN)
-            Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
-            ];
-        let indices = (0..vertices.len() as u32).collect();
-        Mesh::<Vertex> {vertices, indices}
-    };
-
-    #[rustfmt::skip]
-    let plane_mesh = {
-        let vertices = vec![
-            Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
-            Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] }, //. UP (LEFT/FRONT)
-            Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
-            Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
-            Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. UP (RIGHT/BACK)
-            Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
-            ];
-        let indices = (0..vertices.len() as u32).collect();
-        Mesh::<Vertex> {vertices, indices}
-    };
-
-    #[derive(Clone, Copy)]
-    struct Object {
-        transform: Transform<f32>,
-        mesh: MeshIndex,
-    }
-
-    let mut position = Vec3 { x: 0.0, y: 0.0, z: -10.0 };
-    let mut cam_yaw = 0.0;
-    let mut cam_pitch = 0.0;
-
-    let proj_mat = perspective_matrix(TAU / 4.0, 0.1, 10000.0);
-
-    let mut event_loop = EventLoop::new();
-    let window = WindowBuilder::new()
-        .with_title("01-shapes")
-        .with_inner_size(winit::dpi::LogicalSize::new(f64::from(window_width), f64::from(window_height)))
-        .build(&event_loop)
-        .unwrap();
-    window.set_cursor_grab(winit::window::CursorGrabMode::Confined).unwrap();
-    window.set_cursor_visible(false);
-
-    let mut renderer = Renderer::<Vertex>::new(&window, window_width, window_height);
-    let default_stage = renderer.register_stage(
-        "Default".to_owned(),
-        include_bytes!("./shader/vert.spv"),
-        include_bytes!("./shader/frag.spv"),
-        [
-            vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
-            vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
-            vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
-        ],
-    );
-    let shadow_stage = renderer.register_stage(
-        "Shadow".to_owned(),
-        include_bytes!("./shader/shadow_vert.spv"),
-        include_bytes!("./shader/shadow_frag.spv"),
-        [
-            vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
-            vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
-            vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
-        ],
-    );
-    let meshes = vec![renderer.register_mesh(cube_mesh), renderer.register_mesh(pyramid_mesh), renderer.register_mesh(plane_mesh)];
-
-    let mut rng = rand::rngs::StdRng::seed_from_u64(6969);
-    let mut objects: Vec<Object> = (0..100)
-        .map(|i| Object {
-            transform: Transform {
-                position: Vec3::<f32> { x: rng.random_range(-50.0..50.0), y: rng.random_range(-50.0..50.0), z: rng.random_range(-50.0..50.0) },
-                rotation: Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 0.0 }.normalize(), i as f32 * TAU * 0.69),
-                scale: Vec3::<f32> { x: rng.random_range(1.0..3.0), y: rng.random_range(1.0..3.0), z: rng.random_range(1.0..3.0) },
-            },
-            mesh: meshes[i % meshes.len()],
-        })
-        .collect();
-    let room_box = Object { transform: Transform { scale: [100.0, 100.0, 100.0].into(), ..Transform::default() }, mesh: meshes[0] };
-    let mut light_box = Object { transform: Transform::default(), mesh: meshes[0] };
-
-    renderer.clear_color = [0.09, 0.05, 0.14, 1.0];
-
-    let mut last_time;
-    let mut current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-    let mut t = 0.0;
-    let mut dt = 0.01;
-    let mut control = 1.0;
-    let mut should_close = false;
-    let mut a = 1.0;
-    let mut b = 1.0;
-    let mut c = 1.0;
-    let light_proj_matrix = perspective_matrix(TAU / 4.0, 0.1, 200.0);
-
-    let mut focused = false;
-
-    while !should_close {
-        //. Update the objects
-        for object in &mut objects {
-            object.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 1.0, z: 0.0 }.normalize(), 0.1 * dt) * object.transform.rotation;
+        #[derive(Clone, Debug, Copy)]
+        #[repr(C)]
+        struct Vertex {
+            pos: [f32; 4],
+            normal: [f32; 4],
+            color: [f32; 4],
         }
-        light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 3.0, y: 2.0, z: 1.0 }.normalize(), 0.1 * dt) * light_box.transform.rotation;
-        // light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 0.0, y: 1.0, z: 0.0 }.normalize(), a);
 
-        cam_pitch = f32::clamp(cam_pitch % TAU, -TAU / 4.0, TAU / 4.0);
-        cam_yaw = cam_yaw % TAU;
-        let camera_transform = Transform {
-            position,
-            rotation: Quaternion::from_axis_rotation(Vec3 { x: 0.0, y: 1.0, z: 0.0 }.normalize(), cam_yaw) * Quaternion::from_axis_rotation(Vec3 { x: -1.0, y: 0.0, z: 0.0 }.normalize(), cam_pitch),
-            scale: Vec3::one(),
+        #[allow(dead_code)]
+        #[derive(Clone, Debug, Copy)]
+        #[repr(C)]
+        struct DrawUniform {
+            _dummy: f32,
+        }
+
+        #[allow(dead_code)]
+        #[derive(Clone, Debug, Copy)]
+        #[repr(C)]
+        struct RenderStageUniform {
+            view_mat: Mat4x4<f32>,
+            proj_mat: Mat4x4<f32>,
+            light_view_proj_mat: Mat4x4<f32>,
+        }
+
+        #[allow(dead_code)]
+        #[derive(Clone, Debug, Copy)]
+        #[repr(C)]
+        struct ShadowStageUniform {
+            view_mat: Mat4x4<f32>,
+            proj_mat: Mat4x4<f32>,
+        }
+
+        #[allow(dead_code)]
+        #[derive(Clone, Debug, Copy)]
+        #[repr(C)]
+        struct ObjectUniform {
+            model_mat: Mat4x4<f32>,
+            is_light: u32,
+        }
+
+        #[rustfmt::skip]
+        let pyramid_mesh = {
+            let vertices = vec![
+                Vertex { pos: [-1.0,  0.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [ 1.0,  0.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] }, //. DOWN (RIGHT/BACK)
+                Vertex { pos: [ 1.0,  0.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0,  0.0,  1.0, 1.0], normal: [-1.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
+                Vertex { pos: [ 0.0,  1.0,  0.0, 1.0], normal: [-1.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] }, //. LEFT
+                Vertex { pos: [-1.0,  0.0, -1.0, 1.0], normal: [-1.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0,  0.0, -1.0, 1.0], normal: [ 0.0,  1.0, -1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [ 0.0,  1.0,  0.0, 1.0], normal: [ 0.0,  1.0, -1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] }, //. FRONT
+                Vertex { pos: [ 1.0,  0.0, -1.0, 1.0], normal: [ 0.0,  1.0, -1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [ 1.0,  0.0, -1.0, 1.0], normal: [ 1.0,  1.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [ 0.0,  1.0,  0.0, 1.0], normal: [ 1.0,  1.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] }, //. RIGHT
+                Vertex { pos: [ 1.0,  0.0,  1.0, 1.0], normal: [ 1.0,  1.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [ 1.0,  0.0,  1.0, 1.0], normal: [ 0.0,  1.0,  1.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
+                Vertex { pos: [ 0.0,  1.0,  0.0, 1.0], normal: [ 0.0,  1.0,  1.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. BACKWARDS
+                Vertex { pos: [-1.0,  0.0,  1.0, 1.0], normal: [ 0.0,  1.0,  1.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0,  0.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [ 1.0,  0.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] }, //. DOWN (LEFT/FRONT)
+                Vertex { pos: [-1.0,  0.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
+                ];
+            let indices = (0..vertices.len() as u32).collect();
+            Mesh::<Vertex> {vertices, indices}
         };
 
-        event_loop.run_return(|event, _, control_flow| {
+        #[rustfmt::skip]
+        let cube_mesh = {
+            let vertices = vec![
+                Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. DOWN (LEFT/BACK)
+                Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
+                Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
+                Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. DOWN (RIGHT/FRONT)
+                Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] }, //. UP (LEFT/FRONT)
+                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] }, //. UP (RIGHT/BACK)
+                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] }, //. LEFT (FRONT/DOWN)
+                Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] }, //. LEFT (BACK/UP)
+                Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
+                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] }, //. RIGHT (FRONT/UP)
+                Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
+                Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
+                Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] }, //. RIGHT (BACK/DOWN)
+                Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] }, //. BACK (LEFT/DOWN)
+                Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] }, //. BACK (RIGHT/UP)
+                Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] }, //. FRONT (LEFT/UP)
+                Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] }, //. FRONT (RIGHT/DOWN)
+                Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
+                ];
+            let indices = (0..vertices.len() as u32).collect();
+            Mesh::<Vertex> {vertices, indices}
+        };
+
+        #[rustfmt::skip]
+        let plane_mesh = {
+            let vertices = vec![
+                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] }, //. UP (LEFT/FRONT)
+                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. UP (RIGHT/BACK)
+                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
+                ];
+            let indices = (0..vertices.len() as u32).collect();
+            Mesh::<Vertex> {vertices, indices}
+        };
+
+        #[derive(Clone, Copy)]
+        struct Object {
+            transform: Transform<f32>,
+            mesh: MeshIndex,
+        }
+
+        let mut position = Vec3 { x: 0.0, y: 0.0, z: -10.0 };
+        let mut cam_yaw = 0.0;
+        let mut cam_pitch = 0.0;
+
+        let proj_mat = perspective_matrix(TAU / 4.0, 0.1, 10000.0);
+
+        let mut event_loop = EventLoop::new();
+        let window = WindowBuilder::new()
+            .with_title("01-shapes")
+            .with_inner_size(winit::dpi::LogicalSize::new(f64::from(window_width), f64::from(window_height)))
+            .build(&event_loop)
+            .unwrap();
+        window.set_cursor_grab(winit::window::CursorGrabMode::Confined).unwrap();
+        window.set_cursor_visible(false);
+
+        let mut renderer = Renderer::<Vertex>::new(&window, window_width, window_height);
+
+        let shadow_texture = renderer.create_image(
+            //. Create an image to store the shadow map
+            2048,                                                                         //. With with 2048
+            2048,                                                                         //. With height 2048
+            vk::Format::D32_SFLOAT,                                                       //. That consists of depth? f32's
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED, //. Which will be used as a depth stencil, and then as a sampled texture
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,                                        //. Which will only be on the GPU
+        );
+        let shadow_stage = renderer.register_stage(
+            "Shadow".to_owned(),
+            include_bytes!("./shader/shadow_vert.spv"),
+            include_bytes!("./shader/shadow_frag.spv"),
+            vk::PipelineDepthStencilStateCreateInfo {
+                depth_test_enable: 1,
+                depth_write_enable: 1,
+                depth_compare_op: vk::CompareOp::LESS,
+                front: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+                back: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+                max_depth_bounds: 1.0,
+                ..Default::default()
+            },
+            *vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[]),
+            [
+                vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
+                vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
+                vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
+            ],
+            &[&shadow_texture],
+            None,
+            &[vk::AttachmentDescription {
+                format: vk::Format::D32_SFLOAT,
+                samples: vk::SampleCountFlags::TYPE_1,
+                load_op: vk::AttachmentLoadOp::CLEAR,
+                store_op: vk::AttachmentStoreOp::STORE,
+                initial_layout: vk::ImageLayout::UNDEFINED,
+                final_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                ..Default::default()
+            }],
+            [vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } }],
+            &[(*vk::SubpassDescription::builder()
+                .depth_stencil_attachment(&vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL })
+                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS))],
+            &[vk::SubpassDependency {
+                src_subpass: 0,
+                dst_subpass: vk::SUBPASS_EXTERNAL,
+                src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
+                dst_access_mask: vk::AccessFlags::SHADER_READ,
+                ..Default::default()
+            }],
+            &[],
+        );
+
+        let (swapchain_images, get_swapchain_index) = renderer.get_swapchain_images();
+        let depth_image = renderer.create_image(
+            window_width,
+            window_height,
+            vk::Format::D32_SFLOAT,
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        );
+        let default_stage = renderer.register_stage(
+            "Default".to_owned(),
+            include_bytes!("./shader/vert.spv"),
+            include_bytes!("./shader/frag.spv"),
+            vk::PipelineDepthStencilStateCreateInfo {
+                depth_test_enable: 1,
+                depth_write_enable: 1,
+                depth_compare_op: vk::CompareOp::LESS,
+                front: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+                back: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+                max_depth_bounds: 1.0,
+                ..Default::default()
+            },
+            *vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
+                blend_enable: 0,
+                src_color_blend_factor: vk::BlendFactor::SRC_COLOR,
+                dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_DST_COLOR,
+                color_blend_op: vk::BlendOp::ADD,
+                src_alpha_blend_factor: vk::BlendFactor::ZERO,
+                dst_alpha_blend_factor: vk::BlendFactor::ZERO,
+                alpha_blend_op: vk::BlendOp::ADD,
+                color_write_mask: vk::ColorComponentFlags::RGBA,
+            }]),
+            [
+                vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
+                vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
+                vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
+            ],
+            &[&swapchain_images, &depth_image.as_other_length()],
+            Some(Box::new(get_swapchain_index)), // TODO: The hackiest of hacks
+            &[
+                vk::AttachmentDescription {
+                    format: swapchain_images.format(),
+                    samples: vk::SampleCountFlags::TYPE_1,
+                    load_op: vk::AttachmentLoadOp::CLEAR,
+                    store_op: vk::AttachmentStoreOp::STORE,
+                    final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                    ..Default::default()
+                },
+                vk::AttachmentDescription {
+                    format: vk::Format::D16_UNORM,
+                    samples: vk::SampleCountFlags::TYPE_1,
+                    load_op: vk::AttachmentLoadOp::CLEAR,
+                    // initial_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, // TODO: non-undefined initial layout is currently unsupported, as I do not create the barriers to transition them into the correct state before the renderpass begins. In this case it is fine too, as we clear it anyways
+                    final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                    ..Default::default()
+                },
+            ],
+            [
+                vk::ClearValue { color: vk::ClearColorValue { float32: renderer.clear_color } },
+                vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } },
+            ],
+            &[*vk::SubpassDescription::builder()
+                .color_attachments(&[vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL }])
+                .depth_stencil_attachment(&vk::AttachmentReference { attachment: 1, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL })
+                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)],
+            &[vk::SubpassDependency {
+                src_subpass: vk::SUBPASS_EXTERNAL,
+                src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                ..Default::default()
+            }],
+            &[(
+                &shadow_texture,
+                *vk::SamplerCreateInfo::builder()
+                    .compare_enable(true)
+                    .compare_op(vk::CompareOp::LESS_OR_EQUAL)
+                    .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                    .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                    .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE),
+            )],
+        );
+
+        let meshes = vec![renderer.register_mesh(cube_mesh), renderer.register_mesh(pyramid_mesh), renderer.register_mesh(plane_mesh)];
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(6969);
+        let mut objects: Vec<Object> = (0..100)
+            .map(|i| Object {
+                transform: Transform {
+                    position: Vec3::<f32> { x: rng.random_range(-50.0..50.0), y: rng.random_range(-50.0..50.0), z: rng.random_range(-50.0..50.0) },
+                    rotation: Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 0.0 }.normalize(), i as f32 * TAU * 0.69),
+                    scale: Vec3::<f32> { x: rng.random_range(1.0..3.0), y: rng.random_range(1.0..3.0), z: rng.random_range(1.0..3.0) },
+                },
+                mesh: meshes[i % meshes.len()],
+            })
+            .collect();
+        let room_box = Object { transform: Transform { scale: [100.0, 100.0, 100.0].into(), ..Transform::default() }, mesh: meshes[0] };
+        let mut light_box = Object { transform: Transform::default(), mesh: meshes[0] };
+
+        renderer.clear_color = [0.09, 0.05, 0.14, 1.0];
+
+        let mut last_time;
+        let mut current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        let mut t = 0.0;
+        let mut dt = 0.01;
+        let mut control = 1.0;
+        let mut should_close = false;
+        let mut a = 1.0;
+        let mut b = 1.0;
+        let mut c = 1.0;
+        let light_proj_matrix = perspective_matrix(TAU / 4.0, 0.1, 200.0);
+
+        let mut focused = false;
+
+        while !should_close {
+            //. Update the objects
+            for object in &mut objects {
+                object.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 1.0, z: 0.0 }.normalize(), 0.1 * dt) * object.transform.rotation;
+            }
+            light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 3.0, y: 2.0, z: 1.0 }.normalize(), 0.1 * dt) * light_box.transform.rotation;
+            // light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 0.0, y: 1.0, z: 0.0 }.normalize(), a);
+
+            cam_pitch = f32::clamp(cam_pitch % TAU, -TAU / 4.0, TAU / 4.0);
+            cam_yaw = cam_yaw % TAU;
+            let camera_transform = Transform {
+                position,
+                rotation: Quaternion::from_axis_rotation(Vec3 { x: 0.0, y: 1.0, z: 0.0 }.normalize(), cam_yaw)
+                    * Quaternion::from_axis_rotation(Vec3 { x: -1.0, y: 0.0, z: 0.0 }.normalize(), cam_pitch),
+                scale: Vec3::one(),
+            };
+
+            event_loop.run_return(|event, _, control_flow| {
             *control_flow = ControlFlow::Poll;
             match event {
                 Event::WindowEvent {
@@ -324,12 +443,13 @@ fn main() {
             }
         });
 
-        last_time = current_time;
-        current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
-        dt = (current_time - last_time).as_secs_f32();
-        t = t + dt;
-    }
+            last_time = current_time;
+            current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+            dt = (current_time - last_time).as_secs_f32();
+            t = t + dt;
+        }
 
-    renderer.destroy();
-    println!("Goodbye");
+        renderer.destroy();
+        println!("Goodbye");
+    }
 }
