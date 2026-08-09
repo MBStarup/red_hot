@@ -329,6 +329,7 @@ unsafe fn swapchain_stuff(
                         .unwrap()
                         .iter()
                         .cloned()
+                        // .find(|&mode| mode == vk::PresentModeKHR::IMMEDIATE)
                         .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
                         .unwrap_or(vk::PresentModeKHR::FIFO),
                 )
@@ -595,6 +596,7 @@ where Vertex: Copy
                     let swapchain = self.swapchain;
                     let semaphore = self.present_complete_semaphore;
                     move || swapchain_loader.acquire_next_image(swapchain, u64::MAX, semaphore, vk::Fence::null()).unwrap().0 as usize
+                    // TODO: Right now we're kinda hard-coding acquire_next_image in begin/commit render, which makes us acquire twice per frame, this is very probably wrong
                 }
             },
         )
@@ -984,7 +986,7 @@ where Vertex: Copy
 
     pub fn begin_render<DU>(&mut self, draw_uniform: DU)
     where DU: Copy {
-        println!("Starting frame");
+        // println!("Starting frame");
 
         unsafe {
             assert!(self.current_render.is_none(), "Call render_commit before begin_render");
@@ -1081,7 +1083,7 @@ where Vertex: Copy
         OU: Copy,
     {
         let stage = &mut self.stages[stagei.0];
-        println!("Render stage: {}", stage.name);
+        // println!("Render stage: {}", stage.name);
         let stage_framebuffer = unsafe { stage.get_framebuffer() };
         let scissors = [*Rect2D::builder().extent(*vk::Extent2D::builder().width(stage_framebuffer.width).height(stage_framebuffer.height))];
         let viewports = [vk::Viewport { x: 0.0, y: 0.0, width: stage_framebuffer.width as f32, height: stage_framebuffer.height as f32, min_depth: 0.0, max_depth: 1.0 }];
@@ -1231,7 +1233,7 @@ where Vertex: Copy
     }
 
     pub fn render_commit(&mut self) {
-        println!("Committing frame");
+        // println!("Committing frame");
         unsafe {
             let current_render = self.current_render.as_ref().expect("Call render_begin before calling render_end");
             self.device.end_command_buffer(self.command_buffer).expect("End commandbuffer");

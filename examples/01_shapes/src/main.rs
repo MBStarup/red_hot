@@ -1,5 +1,6 @@
 use std::{
-    f32::consts::TAU,
+    f32::consts::{PI, TAU},
+    println,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -405,14 +406,19 @@ fn main() {
 
         let mut focused = false;
 
+        const N_FRAMETIME: usize = 120;
+        let mut frametime_circ_buffer = [0.0; N_FRAMETIME];
+        let mut frametime_index = 0;
+
         while !should_close {
             //. Update the objects
             for object in &mut objects {
                 object.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 1.0, z: 0.0 }.normalize(), 0.1 * dt) * object.transform.rotation;
             }
+            light_box.transform.position = Vec3 { x: 50.0 * f32::sin(t * 1.0), y: 0.0, z: 50.0 * f32::cos(t * 1.0) };
             light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 3.0, y: 2.0, z: 1.0 }.normalize(), 0.1 * dt) * light_box.transform.rotation;
+            light_box2.transform.position = Vec3 { x: 50.0 * f32::sin(PI + t * 1.0), y: 0.0, z: 50.0 * f32::cos(PI + t * 1.0) };
             light_box2.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 3.0, y: 2.0, z: 1.0 }.normalize(), -0.1 * dt) * light_box2.transform.rotation;
-            // light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 0.0, y: 1.0, z: 0.0 }.normalize(), a);
 
             cam_pitch = f32::clamp(cam_pitch % TAU, -TAU / 4.0, TAU / 4.0);
             cam_yaw = cam_yaw % TAU;
@@ -522,6 +528,15 @@ fn main() {
             last_time = current_time;
             current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
             dt = (current_time - last_time).as_secs_f32();
+            frametime_circ_buffer[frametime_index] = dt;
+            frametime_index = (frametime_index + 1) % N_FRAMETIME;
+            if frametime_circ_buffer[N_FRAMETIME - 1] != 0.0 {
+                //. Wait untill buffer is filled
+                let avg_frametime = frametime_circ_buffer.iter().sum::<f32>() / N_FRAMETIME as f32;
+                println!("fps: {}", 1.0 / avg_frametime);
+            }
+
+            dt *= a; //. Modifyer
             t = t + dt;
         }
 
