@@ -801,7 +801,8 @@ where Vertex: Copy
             .iter()
             .enumerate()
             .map(|(i, (img, sampler_info))| {
-                // TODO: Figure out if we need to store the samplers or something here, of if this is fine?
+                // TODO: Store the sampler for cleanup later
+                // TODO: Store the sampler for reuse on OTHER textures
                 let sampler = self.device.create_sampler(sampler_info, None).unwrap();
                 self.device.update_descriptor_sets(
                     &[*vk::WriteDescriptorSet::builder()

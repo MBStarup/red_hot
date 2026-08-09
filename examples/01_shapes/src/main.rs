@@ -46,6 +46,7 @@ fn main() {
             view_mat: Mat4x4<f32>,
             proj_mat: Mat4x4<f32>,
             light_view_proj_mat: Mat4x4<f32>,
+            light_view_proj_mat2: Mat4x4<f32>,
         }
 
         #[allow(dead_code)]
@@ -225,6 +226,60 @@ fn main() {
             &[],
         );
 
+        let shadow_texture2 = renderer.create_image(
+            //. Create an image to store the shadow map
+            2048,                                                                         //. With with 2048
+            2048,                                                                         //. With height 2048
+            vk::Format::D32_SFLOAT,                                                       //. That consists of depth? f32's
+            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED, //. Which will be used as a depth stencil, and then as a sampled texture
+            vk::MemoryPropertyFlags::DEVICE_LOCAL,                                        //. Which will only be on the GPU
+        );
+        let shadow_stage2 = renderer.register_stage(
+            "Shadow".to_owned(),
+            include_bytes!("./shader/shadow_vert.spv"),
+            include_bytes!("./shader/shadow_frag.spv"),
+            vk::PipelineDepthStencilStateCreateInfo {
+                depth_test_enable: 1,
+                depth_write_enable: 1,
+                depth_compare_op: vk::CompareOp::LESS,
+                front: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+                back: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+                max_depth_bounds: 1.0,
+                ..Default::default()
+            },
+            *vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[]),
+            [
+                vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
+                vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
+                vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
+            ],
+            &[&shadow_texture2],
+            None,
+            &[vk::AttachmentDescription {
+                format: vk::Format::D32_SFLOAT,
+                samples: vk::SampleCountFlags::TYPE_1,
+                load_op: vk::AttachmentLoadOp::CLEAR,
+                store_op: vk::AttachmentStoreOp::STORE,
+                initial_layout: vk::ImageLayout::UNDEFINED,
+                final_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                ..Default::default()
+            }],
+            [vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } }],
+            &[(*vk::SubpassDescription::builder()
+                .depth_stencil_attachment(&vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL })
+                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS))],
+            &[vk::SubpassDependency {
+                src_subpass: 0,
+                dst_subpass: vk::SUBPASS_EXTERNAL,
+                src_stage_mask: vk::PipelineStageFlags::LATE_FRAGMENT_TESTS,
+                src_access_mask: vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+                dst_stage_mask: vk::PipelineStageFlags::FRAGMENT_SHADER,
+                dst_access_mask: vk::AccessFlags::SHADER_READ,
+                ..Default::default()
+            }],
+            &[],
+        );
+
         let (swapchain_images, get_swapchain_index) = renderer.get_swapchain_images();
         let depth_image = renderer.create_image(
             window_width,
@@ -296,15 +351,26 @@ fn main() {
                 dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
                 ..Default::default()
             }],
-            &[(
-                &shadow_texture,
-                *vk::SamplerCreateInfo::builder()
-                    .compare_enable(true)
-                    .compare_op(vk::CompareOp::LESS_OR_EQUAL)
-                    .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                    .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-                    .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE),
-            )],
+            &[
+                (
+                    &shadow_texture,
+                    *vk::SamplerCreateInfo::builder()
+                        .compare_enable(true)
+                        .compare_op(vk::CompareOp::LESS_OR_EQUAL)
+                        .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                        .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                        .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE),
+                ),
+                (
+                    &shadow_texture2,
+                    *vk::SamplerCreateInfo::builder()
+                        .compare_enable(true)
+                        .compare_op(vk::CompareOp::LESS_OR_EQUAL)
+                        .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                        .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                        .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE),
+                ),
+            ],
         );
 
         let meshes = vec![renderer.register_mesh(cube_mesh), renderer.register_mesh(pyramid_mesh), renderer.register_mesh(plane_mesh)];
@@ -322,6 +388,7 @@ fn main() {
             .collect();
         let room_box = Object { transform: Transform { scale: [100.0, 100.0, 100.0].into(), ..Transform::default() }, mesh: meshes[0] };
         let mut light_box = Object { transform: Transform::default(), mesh: meshes[0] };
+        let mut light_box2 = Object { transform: Transform::default(), mesh: meshes[0] };
 
         renderer.clear_color = [0.09, 0.05, 0.14, 1.0];
 
@@ -344,6 +411,7 @@ fn main() {
                 object.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 1.0, z: 0.0 }.normalize(), 0.1 * dt) * object.transform.rotation;
             }
             light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 3.0, y: 2.0, z: 1.0 }.normalize(), 0.1 * dt) * light_box.transform.rotation;
+            light_box2.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 3.0, y: 2.0, z: 1.0 }.normalize(), -0.1 * dt) * light_box2.transform.rotation;
             // light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 0.0, y: 1.0, z: 0.0 }.normalize(), a);
 
             cam_pitch = f32::clamp(cam_pitch % TAU, -TAU / 4.0, TAU / 4.0);
@@ -412,12 +480,18 @@ fn main() {
                         objects.iter().map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 }).collect(),
                     );
                     renderer.render_stage(
+                        shadow_stage2,
+                        ShadowStageUniform { view_mat: light_box2.transform.get_inverse_matrix(), proj_mat: light_proj_matrix },
+                        objects.iter().map(|x| x.mesh).collect(),
+                        objects.iter().map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 }).collect(),
+                    );
+                    renderer.render_stage(
                         default_stage,
                         RenderStageUniform {
-                            // view_mat: light_box.transform.get_inverse_matrix(),
                             view_mat: camera_transform.get_inverse_matrix(),
                             proj_mat,
                             light_view_proj_mat: light_proj_matrix * light_box.transform.get_inverse_matrix(),
+                            light_view_proj_mat2: light_proj_matrix * light_box2.transform.get_inverse_matrix(),
                         },
                         objects
                             .iter()
@@ -425,6 +499,7 @@ fn main() {
                             .chain([
                                 room_box.mesh,
                                 light_box.mesh,
+                                light_box2.mesh,
                             ])
                             .collect(),
                         objects
@@ -433,6 +508,7 @@ fn main() {
                             .chain([
                                 ObjectUniform { model_mat: room_box.transform.get_matrix(), is_light: 0 },
                                 ObjectUniform { model_mat: light_box.transform.get_matrix(), is_light: 1 },
+                                ObjectUniform { model_mat: light_box2.transform.get_matrix(), is_light: 1 },
                             ])
                             .collect(),
                     );

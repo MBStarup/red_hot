@@ -10,6 +10,7 @@ layout(set = 1, binding = 0) uniform StageUniform {
     mat4 view;
     mat4 proj;
     mat4 light_view_proj;
+    mat4 light_view_proj2;
 } stage_uniform;
 
 layout(set = 2, binding = 0) uniform ObjectUniform {
@@ -28,11 +29,13 @@ out gl_PerVertex {
 };
 out layout(location = 0) vec4 color;
 out layout(location = 1) vec4 light_space_pos;
-flat out layout(location = 2) int is_light;
+out layout(location = 2) vec4 light_space_pos2;
+flat out layout(location = 3) int is_light;
 
 void main() {
     gl_Position = in_position * object_uniform.model * stage_uniform.view * stage_uniform.proj;
     light_space_pos = in_position * object_uniform.model * stage_uniform.light_view_proj;
+    light_space_pos2 = in_position * object_uniform.model * stage_uniform.light_view_proj2;
     is_light = object_uniform.is_light;
     // https://stackoverflow.com/a/14197892
     // float brightness = max(stage_uniform.ambient_light, dot(-stage_uniform.light_dir, normalize((in_normal * inverse(transpose(object_uniform.model))).xyz)));
