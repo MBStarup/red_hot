@@ -48,6 +48,8 @@ fn main() {
             proj_mat: Mat4x4<f32>,
             light_view_proj_mat: Mat4x4<f32>,
             light_view_proj_mat2: Mat4x4<f32>,
+            light_dir: [f32; 4],
+            light_dir2: [f32; 4],
         }
 
         #[allow(dead_code)]
@@ -84,8 +86,8 @@ fn main() {
                 Vertex { pos: [ 1.0,  0.0,  1.0, 1.0], normal: [ 0.0,  1.0,  1.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
                 Vertex { pos: [ 0.0,  1.0,  0.0, 1.0], normal: [ 0.0,  1.0,  1.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. BACKWARDS
                 Vertex { pos: [-1.0,  0.0,  1.0, 1.0], normal: [ 0.0,  1.0,  1.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
-                Vertex { pos: [-1.0,  0.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
-                Vertex { pos: [ 1.0,  0.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] }, //. DOWN (LEFT/FRONT)
+                Vertex { pos: [ 1.0,  0.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0,  0.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] }, //. DOWN (LEFT/FRONT)
                 Vertex { pos: [-1.0,  0.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
                 ];
             let indices = (0..vertices.len() as u32).collect();
@@ -93,54 +95,54 @@ fn main() {
         };
 
         #[rustfmt::skip]
-        let cube_mesh = {
+        let (cube_mesh, inverse_cube_mesh) = {
             let vertices = vec![
-                Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
-                Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. DOWN (LEFT/BACK)
-                Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
-                Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
-                Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. DOWN (RIGHT/FRONT)
-                Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
-                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
-                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] }, //. UP (LEFT/FRONT)
-                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
-                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
-                Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] }, //. UP (RIGHT/BACK)
-                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
-                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
-                Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] }, //. LEFT (FRONT/DOWN)
-                Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
-                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
-                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] }, //. LEFT (BACK/UP)
-                Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
-                Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
-                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] }, //. RIGHT (FRONT/UP)
-                Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
-                Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
-                Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] }, //. RIGHT (BACK/DOWN)
-                Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
-                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
-                Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] }, //. BACK (LEFT/DOWN)
-                Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
-                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
-                Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] }, //. BACK (RIGHT/UP)
-                Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
-                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
-                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] }, //. FRONT (LEFT/UP)
-                Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
-                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
-                Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] }, //. FRONT (RIGHT/DOWN)
-                Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
+                Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. DOWN (LEFT/BACK)
+                Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
+                Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
+                Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. DOWN (RIGHT/FRONT)
+                Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] }, //. UP (LEFT/FRONT)
+                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] }, //. UP (RIGHT/BACK)
+                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] }, //. LEFT (FRONT/DOWN)
+                Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] }, //. LEFT (BACK/UP)
+                Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [-1.0,  0.0,  0.0, 1.0], color: [1.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
+                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] }, //. RIGHT (FRONT/UP)
+                Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
+                Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
+                Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] }, //. RIGHT (BACK/DOWN)
+                Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [ 1.0,  0.0,  0.0, 1.0], color: [0.0, 1.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] }, //. BACK (LEFT/DOWN)
+                Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] }, //. BACK (RIGHT/UP)
+                Vertex { pos: [ 1.0, -1.0, -1.0, 1.0], normal: [ 0.0,  0.0, -1.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] }, //. FRONT (LEFT/UP)
+                Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
+                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] }, //. FRONT (RIGHT/DOWN)
+                Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
                 ];
-            let indices = (0..vertices.len() as u32).collect();
-            Mesh::<Vertex> {vertices, indices}
+            let indices: Vec<u32> = (0..vertices.len() as u32).collect();
+            (Mesh::<Vertex> {vertices: vertices.clone(), indices: indices.clone()}, Mesh::<Vertex> {vertices: vertices.into_iter().rev().map(|v| Vertex{ pos: v.pos , normal: [-v.normal[0], -v.normal[1], -v.normal[2], 1.0], color: v.color }).collect(), indices})
         };
 
         #[rustfmt::skip]
         let plane_mesh = {
             let vertices = vec![
-                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
-                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] }, //. UP (LEFT/FRONT)
+                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] }, //. UP (LEFT/FRONT)
                 Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
                 Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
                 Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. UP (RIGHT/BACK)
@@ -175,8 +177,8 @@ fn main() {
 
         let shadow_texture = renderer.create_image(
             //. Create an image to store the shadow map
-            2048,                                                                         //. With with 2048
-            2048,                                                                         //. With height 2048
+            4096,                                                                         //. With with 4096
+            4096,                                                                         //. With height 4096
             vk::Format::D32_SFLOAT,                                                       //. That consists of depth? f32's
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED, //. Which will be used as a depth stencil, and then as a sampled texture
             vk::MemoryPropertyFlags::DEVICE_LOCAL,                                        //. Which will only be on the GPU
@@ -185,6 +187,13 @@ fn main() {
             "Shadow".to_owned(),
             include_bytes!("./shader/shadow_vert.spv"),
             include_bytes!("./shader/shadow_frag.spv"),
+            vk::PipelineRasterizationStateCreateInfo {
+                cull_mode: vk::CullModeFlags::FRONT,
+                front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                line_width: 1.0,
+                polygon_mode: vk::PolygonMode::FILL,
+                ..Default::default()
+            },
             vk::PipelineDepthStencilStateCreateInfo {
                 depth_test_enable: 1,
                 depth_write_enable: 1,
@@ -194,14 +203,13 @@ fn main() {
                 max_depth_bounds: 1.0,
                 ..Default::default()
             },
-            *vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[]),
+            *vk::PipelineColorBlendStateCreateInfo::builder().attachments(&[]),
             [
                 vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
                 vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
                 vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
             ],
             &[&shadow_texture],
-            None,
             &[vk::AttachmentDescription {
                 format: vk::Format::D32_SFLOAT,
                 samples: vk::SampleCountFlags::TYPE_1,
@@ -229,8 +237,8 @@ fn main() {
 
         let shadow_texture2 = renderer.create_image(
             //. Create an image to store the shadow map
-            2048,                                                                         //. With with 2048
-            2048,                                                                         //. With height 2048
+            4096,                                                                         //. With with 4096
+            4096,                                                                         //. With height 4096
             vk::Format::D32_SFLOAT,                                                       //. That consists of depth? f32's
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED, //. Which will be used as a depth stencil, and then as a sampled texture
             vk::MemoryPropertyFlags::DEVICE_LOCAL,                                        //. Which will only be on the GPU
@@ -239,6 +247,13 @@ fn main() {
             "Shadow".to_owned(),
             include_bytes!("./shader/shadow_vert.spv"),
             include_bytes!("./shader/shadow_frag.spv"),
+            vk::PipelineRasterizationStateCreateInfo {
+                cull_mode: vk::CullModeFlags::FRONT,
+                front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                line_width: 1.0,
+                polygon_mode: vk::PolygonMode::FILL,
+                ..Default::default()
+            },
             vk::PipelineDepthStencilStateCreateInfo {
                 depth_test_enable: 1,
                 depth_write_enable: 1,
@@ -248,14 +263,13 @@ fn main() {
                 max_depth_bounds: 1.0,
                 ..Default::default()
             },
-            *vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[]),
+            *vk::PipelineColorBlendStateCreateInfo::builder().attachments(&[]),
             [
                 vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
                 vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
                 vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
             ],
             &[&shadow_texture2],
-            None,
             &[vk::AttachmentDescription {
                 format: vk::Format::D32_SFLOAT,
                 samples: vk::SampleCountFlags::TYPE_1,
@@ -281,7 +295,6 @@ fn main() {
             &[],
         );
 
-        let (swapchain_images, get_swapchain_index) = renderer.get_swapchain_images();
         let depth_image = renderer.create_image(
             window_width,
             window_height,
@@ -293,6 +306,13 @@ fn main() {
             "Default".to_owned(),
             include_bytes!("./shader/vert.spv"),
             include_bytes!("./shader/frag.spv"),
+            vk::PipelineRasterizationStateCreateInfo {
+                cull_mode: vk::CullModeFlags::BACK,
+                front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+                line_width: 1.0,
+                polygon_mode: vk::PolygonMode::FILL,
+                ..Default::default()
+            },
             vk::PipelineDepthStencilStateCreateInfo {
                 depth_test_enable: 1,
                 depth_write_enable: 1,
@@ -317,11 +337,10 @@ fn main() {
                 vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
                 vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
             ],
-            &[&swapchain_images, &depth_image.as_other_length()],
-            Some(Box::new(get_swapchain_index)), // TODO: The hackiest of hacks
+            &[&red_hot::renderer::RedHotStageImage::SwapchainImage(), &depth_image],
             &[
                 vk::AttachmentDescription {
-                    format: swapchain_images.format(),
+                    format: renderer.swapchain_image_format,
                     samples: vk::SampleCountFlags::TYPE_1,
                     load_op: vk::AttachmentLoadOp::CLEAR,
                     store_op: vk::AttachmentStoreOp::STORE,
@@ -329,7 +348,7 @@ fn main() {
                     ..Default::default()
                 },
                 vk::AttachmentDescription {
-                    format: vk::Format::D16_UNORM,
+                    format: vk::Format::D32_SFLOAT,
                     samples: vk::SampleCountFlags::TYPE_1,
                     load_op: vk::AttachmentLoadOp::CLEAR,
                     // initial_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, // TODO: non-undefined initial layout is currently unsupported, as I do not create the barriers to transition them into the correct state before the renderpass begins. In this case it is fine too, as we clear it anyways
@@ -374,20 +393,45 @@ fn main() {
             ],
         );
 
-        let meshes = vec![renderer.register_mesh(cube_mesh), renderer.register_mesh(pyramid_mesh), renderer.register_mesh(plane_mesh)];
+        let meshes = vec![
+            renderer.register_mesh(cube_mesh),
+            renderer.register_mesh(pyramid_mesh),
+            // renderer.register_mesh(plane_mesh),
+        ];
+        let inverse_cube_meshi = renderer.register_mesh(inverse_cube_mesh);
+        let room_box = Object { transform: Transform { scale: [100.0, 100.0, 100.0].into(), ..Transform::default() }, mesh: inverse_cube_meshi };
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(6969);
-        let mut objects: Vec<Object> = (0..100)
+        let num_objs = 69;
+        let mut objects: Vec<Object> = (0..num_objs)
             .map(|i| Object {
                 transform: Transform {
-                    position: Vec3::<f32> { x: rng.random_range(-50.0..50.0), y: rng.random_range(-50.0..50.0), z: rng.random_range(-50.0..50.0) },
+                    position: Vec3::<f32> {
+                        x: rng.random_range(-room_box.transform.scale.x..room_box.transform.scale.x),
+                        y: rng.random_range(-room_box.transform.scale.y..room_box.transform.scale.y),
+                        z: rng.random_range(-room_box.transform.scale.z..room_box.transform.scale.z),
+                    },
                     rotation: Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 0.0 }.normalize(), i as f32 * TAU * 0.69),
-                    scale: Vec3::<f32> { x: rng.random_range(1.0..3.0), y: rng.random_range(1.0..3.0), z: rng.random_range(1.0..3.0) },
+                    scale: Vec3::<f32> { x: rng.random_range(0.5..10.0), y: rng.random_range(0.5..10.0), z: rng.random_range(0.5..10.0) },
                 },
                 mesh: meshes[i % meshes.len()],
             })
             .collect();
-        let room_box = Object { transform: Transform { scale: [100.0, 100.0, 100.0].into(), ..Transform::default() }, mesh: meshes[0] };
+
+        let mut rotation_data: Vec<(Vec3<f32>, f32)> = (0..num_objs)
+            .map(|i| {
+                (
+                    Vec3::<f32> {
+                        x: rng.random_range(-room_box.transform.scale.x..room_box.transform.scale.x),
+                        y: rng.random_range(-room_box.transform.scale.y..room_box.transform.scale.y),
+                        z: rng.random_range(-room_box.transform.scale.z..room_box.transform.scale.z),
+                    }
+                    .normalize(),
+                    rng.random_range(-5.0..5.0),
+                )
+            })
+            .collect();
+
         let mut light_box = Object { transform: Transform::default(), mesh: meshes[0] };
         let mut light_box2 = Object { transform: Transform::default(), mesh: meshes[0] };
 
@@ -412,13 +456,26 @@ fn main() {
 
         while !should_close {
             //. Update the objects
-            for object in &mut objects {
-                object.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 1.0, z: 0.0 }.normalize(), 0.1 * dt) * object.transform.rotation;
+            for (i, object) in &mut objects.iter_mut().enumerate() {
+                object.transform.rotation = Quaternion::from_axis_rotation(rotation_data[i].0, rotation_data[i].1 * dt) * object.transform.rotation;
+                object.transform.position = (rotation_data[i].0 * rotation_data[i].1 * b as f32 * dt) + object.transform.position;
+                if object.transform.position.x >= (room_box.transform.scale.x - object.transform.scale.x) || object.transform.position.x <= -(room_box.transform.scale.x - object.transform.scale.x) {
+                    rotation_data[i].0.x = -rotation_data[i].0.x;
+                }
+                if object.transform.position.y >= (room_box.transform.scale.y - object.transform.scale.y) || object.transform.position.y <= -(room_box.transform.scale.y - object.transform.scale.y) {
+                    rotation_data[i].0.y = -rotation_data[i].0.y;
+                }
+                if object.transform.position.z >= (room_box.transform.scale.z - object.transform.scale.z) || object.transform.position.z <= -(room_box.transform.scale.z - object.transform.scale.z) {
+                    rotation_data[i].0.z = -rotation_data[i].0.z;
+                }
             }
-            light_box.transform.position = Vec3 { x: 50.0 * f32::sin(t * 1.0), y: 0.0, z: 50.0 * f32::cos(t * 1.0) };
-            light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 3.0, y: 2.0, z: 1.0 }.normalize(), 0.1 * dt) * light_box.transform.rotation;
-            light_box2.transform.position = Vec3 { x: 50.0 * f32::sin(PI + t * 1.0), y: 0.0, z: 50.0 * f32::cos(PI + t * 1.0) };
-            light_box2.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 3.0, y: 2.0, z: 1.0 }.normalize(), -0.1 * dt) * light_box2.transform.rotation;
+            light_box.transform.position = Vec3 { x: 50.0 * f32::sin(t * 1.0), y: 50.0 * f32::tan(t * 1.0), z: 50.0 * f32::cos(t * 1.0) };
+            light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 1.0, z: 0.0 }.normalize(), 0.01 * dt) * light_box.transform.rotation;
+            light_box2.transform.position = Vec3 { x: 50.0 * f32::sin(PI + t * 1.0), y: 50.0 * f32::tan(PI + t * 1.0), z: 50.0 * f32::cos(PI + t * 1.0) };
+            light_box2.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 1.0 }.normalize(), -0.1 * dt) * light_box2.transform.rotation;
+
+            let light_dir = Vec3::forward().rotate(light_box.transform.rotation);
+            let light_dir2 = Vec3::forward().rotate(light_box2.transform.rotation);
 
             cam_pitch = f32::clamp(cam_pitch % TAU, -TAU / 4.0, TAU / 4.0);
             cam_yaw = cam_yaw % TAU;
@@ -478,7 +535,7 @@ fn main() {
                 },
                 #[rustfmt::skip]
                 Event::MainEventsCleared => {
-                    renderer.begin_render(DrawUniform { _dummy: 69.0 });
+                    renderer.render_begin(DrawUniform { _dummy: 69.0 });
                     renderer.render_stage(
                         shadow_stage,
                         ShadowStageUniform { view_mat: light_box.transform.get_inverse_matrix(), proj_mat: light_proj_matrix },
@@ -498,6 +555,8 @@ fn main() {
                             proj_mat,
                             light_view_proj_mat: light_proj_matrix * light_box.transform.get_inverse_matrix(),
                             light_view_proj_mat2: light_proj_matrix * light_box2.transform.get_inverse_matrix(),
+                            light_dir: [light_dir.x, light_dir.y, light_dir.z, 0.0],
+                            light_dir2: [light_dir2.x, light_dir2.y, light_dir2.z, 0.0],
                         },
                         objects
                             .iter()

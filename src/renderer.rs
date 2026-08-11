@@ -16,7 +16,6 @@ pub use ash::{Device, Instance};
 use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
 use core::panic;
-use std::println;
 use std::{
     borrow::Cow,
     default::Default,
@@ -26,6 +25,7 @@ use std::{
     os::raw::c_char,
     todo,
 };
+use std::{matches, println};
 
 use winit::window::Window;
 
@@ -63,7 +63,6 @@ struct RenderStage {
     vertex_attribute_descriptions: Box<[VertexInputAttributeDescription]>, // NOTE[perf]: Written VERY rarely (only during setup), read rarely, only during pipeline creation/re-creation
     render_pass: RenderPass,                                               // TODO: Convert to buffer backed index system , to allow reuse
     framebuffers: Vec<RedHotFramebuffer>,
-    img_index_fn: Option<Box<dyn Fn() -> usize>>,
     clear_values: Box<[vk::ClearValue]>,
 }
 
@@ -74,31 +73,9 @@ pub struct RedHotFramebuffer {
     height: u32,
 }
 
-pub struct RedHotRenderPassAttachment<const N_IMAGES: usize> {
-    image: RedHotStageImages<N_IMAGES>,
-    load_op: vk::StencilOp,
-    store_op: vk::StencilOp,
-}
-
-pub enum RedHotStageImages<const N_IMAGES: usize> {
+pub enum RedHotStageImage {
     Image(RedHotImageInfo),
-    Images([RedHotImageInfo; N_IMAGES]),
-}
-
-impl<const A: usize> RedHotStageImages<A> {
-    pub fn as_other_length<const B: usize>(self) -> RedHotStageImages<B> {
-        match self {
-            RedHotStageImages::Image(image) => RedHotStageImages::Image(image),
-            RedHotStageImages::Images(_) => panic!("cannot convert multi-image stage to other lenghts"),
-        }
-    }
-
-    pub fn format(&self) -> vk::Format {
-        match self {
-            RedHotStageImages::Image(img_info) => img_info.format,
-            RedHotStageImages::Images(img_infos) => img_infos[0].format,
-        }
-    }
+    SwapchainImage(), // TODO[multi-surface-support]: This should take a surface, for which the associated swapchain should be used
 }
 
 pub struct RedHotImageInfo {
@@ -115,6 +92,7 @@ pub struct RedHotPipelineCreateInfo {
     vertex_shader_module: ShaderModule,
     fragment_shader_module: ShaderModule,
     pipeline_layout: PipelineLayout,
+    rasterization_state: vk::PipelineRasterizationStateCreateInfo,
     depth_stencil_state: PipelineDepthStencilStateCreateInfo,
     color_blend_state: PipelineColorBlendStateCreateInfo,
 }
@@ -124,13 +102,6 @@ struct RedHotPipeline {
 }
 
 impl RenderStage {
-    unsafe fn get_framebuffer(&self) -> RedHotFramebuffer {
-        match &self.img_index_fn {
-            Some(idx) => *self.framebuffers.iter().nth(idx()).expect("No framebuffer at index"),
-            None => *self.framebuffers.iter().next().expect("No framebuffer"),
-        }
-    }
-
     // pub fn destroy_graphics_pipeline(&mut self, device: &Device) {
     //     match self.graphics_pipeline {
     //         None => return,
@@ -140,11 +111,11 @@ impl RenderStage {
     //     }
     // }
 
-    fn get_pipeline<Vertex>(&mut self, device: &Device) -> Pipeline {
+    fn get_pipeline<Vertex>(&mut self, device: &Device, present_index: u32) -> Pipeline {
         match self.pipeline.graphics_pipeline {
             Some(pipeline) => pipeline,
             None => unsafe {
-                let fb = self.get_framebuffer();
+                let fb = self.get_framebuffer(present_index);
                 self.pipeline.graphics_pipeline = Some(self.create_graphics_pipeline::<Vertex>(device, fb.width, fb.height));
                 self.pipeline.graphics_pipeline.unwrap_unchecked()
             },
@@ -184,12 +155,7 @@ impl RenderStage {
                     )
                     .input_assembly_state(&vk::PipelineInputAssemblyStateCreateInfo { topology: vk::PrimitiveTopology::TRIANGLE_LIST, ..Default::default() })
                     .viewport_state(&vk::PipelineViewportStateCreateInfo::builder().scissors(&scissors).viewports(&viewports))
-                    .rasterization_state(&vk::PipelineRasterizationStateCreateInfo {
-                        front_face: vk::FrontFace::COUNTER_CLOCKWISE,
-                        line_width: 1.0,
-                        polygon_mode: vk::PolygonMode::FILL,
-                        ..Default::default()
-                    })
+                    .rasterization_state(&self.pipeline.create_info.rasterization_state)
                     .multisample_state(&vk::PipelineMultisampleStateCreateInfo { rasterization_samples: vk::SampleCountFlags::TYPE_1, ..Default::default() })
                     .depth_stencil_state(&self.pipeline.create_info.depth_stencil_state)
                     .color_blend_state(&self.pipeline.create_info.color_blend_state)
@@ -202,6 +168,15 @@ impl RenderStage {
             .expect("Unable to create graphics pipeline")
             .first()
             .unwrap()
+    }
+
+    fn get_framebuffer(&self, present_index: u32) -> &RedHotFramebuffer {
+        if self.framebuffers.len() > 1 {
+            // NOTE: Currently the only way yo thave more than one framebuffer, is if you are a "presentable stage", i.e. target the swapchain images
+            &self.framebuffers[present_index as usize]
+        } else {
+            self.framebuffers.first().expect("No framebuffers???")
+        }
     }
 }
 
@@ -226,13 +201,17 @@ where Vertex: Copy
     surface: SurfaceKHR,
     pdevice: PhysicalDevice,
     device: Device,
+
+    // TODO[multi-surface-support]: Combine these, then do a Surface -> Swapchain map
     swapchain: SwapchainKHR,
     swapchain_loader: Swapchain,
     swapchain_image_views: Vec<ImageView>,
-    swapchain_image_format: vk::Format,
+    pub swapchain_image_format: vk::Format,
+    swapchain_images: Vec<vk::Image>,
+
     device_memory_properties: PhysicalDeviceMemoryProperties,
     present_complete_semaphore: Semaphore,
-    rendering_complete_semaphore: Semaphore,
+    rendering_complete_semaphores: [Semaphore; 3], // NOTE: One per swapchain image, see: https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html
     present_queue: Queue,
 
     command_buffer: CommandBuffer,
@@ -292,7 +271,7 @@ unsafe fn swapchain_stuff(
     surface: SurfaceKHR,
     window_width: u32,
     window_height: u32,
-) -> (Swapchain, SwapchainKHR, vk::Format, Vec<vk::ImageView>) {
+) -> (Swapchain, SwapchainKHR, vk::Format, Vec<vk::ImageView>, Vec<vk::Image>) {
     let surface_loader = Surface::new(&entry, &instance); //? Why is the surface loader a surface, and what is "surface loader"??? and why is the surface a KHR_surface?? What are these types??
 
     let surface_format = surface_loader.get_physical_device_surface_formats(pdevice, surface).unwrap()[0];
@@ -329,8 +308,8 @@ unsafe fn swapchain_stuff(
                         .unwrap()
                         .iter()
                         .cloned()
-                        // .find(|&mode| mode == vk::PresentModeKHR::IMMEDIATE)
-                        .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
+                        .find(|&mode| mode == vk::PresentModeKHR::IMMEDIATE)
+                        // .find(|&mode| mode == vk::PresentModeKHR::MAILBOX)
                         .unwrap_or(vk::PresentModeKHR::FIFO),
                 )
                 .clipped(true)
@@ -354,7 +333,7 @@ unsafe fn swapchain_stuff(
         })
         .collect();
 
-    (swapchain_loader, swapchain, surface_format.format, image_views)
+    (swapchain_loader, swapchain, surface_format.format, image_views, images)
 }
 
 impl<Vertex> Renderer<Vertex>
@@ -457,7 +436,11 @@ where Vertex: Copy
 
             //# Semaphores and Fences
             let present_complete_semaphore = device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap();
-            let rendering_complete_semaphore = device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap();
+            let rendering_complete_semaphores = [
+                device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap(),
+                device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap(),
+                device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap(),
+            ];
 
             let command_buffer_reuse_fence = device.create_fence(&vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED), None).expect("Create fence failed.");
             device.reset_fences(&[command_buffer_reuse_fence]).expect("Reset fences failed.");
@@ -505,7 +488,8 @@ where Vertex: Copy
             device.wait_for_fences(&[command_buffer_reuse_fence], true, std::u64::MAX).expect("Wait for fence failed."); //. Wait for the setup commands to finish
 
             //# Swapchian images
-            let (swapchain_loader, swapchain, swapchain_image_format, swapchain_image_views) = swapchain_stuff(&device, &instance, &entry, pdevice, surface, window_width, window_height);
+            let (swapchain_loader, swapchain, swapchain_image_format, swapchain_image_views, swapchain_images) =
+                swapchain_stuff(&device, &instance, &entry, pdevice, surface, window_width, window_height);
 
             //# Descriptors set for per frame DrawUniform
             let draw_descriptor_set_layout = device
@@ -550,10 +534,11 @@ where Vertex: Copy
                 swapchain_image_format,
                 swapchain_loader,
                 swapchain_image_views,
+                swapchain_images,
 
                 device_memory_properties,
                 present_complete_semaphore,
-                rendering_complete_semaphore,
+                rendering_complete_semaphores,
                 present_queue,
 
                 min_uniform_buffer_offset_alignment: min_uniform_buffer_offset_alignment as usize,
@@ -581,28 +566,29 @@ where Vertex: Copy
         }
     }
 
-    pub fn get_swapchain_images(&self) -> (RedHotStageImages<3>, impl Fn() -> usize) {
-        (
-            RedHotStageImages::Images([
-                RedHotImageInfo { view: self.swapchain_image_views[0], width: self.window_width, height: self.window_height, format: self.swapchain_image_format },
-                RedHotImageInfo { view: self.swapchain_image_views[1], width: self.window_width, height: self.window_height, format: self.swapchain_image_format },
-                RedHotImageInfo { view: self.swapchain_image_views[2], width: self.window_width, height: self.window_height, format: self.swapchain_image_format },
-            ]),
-            unsafe {
-                // TODO: Safety
-                // NOTE: The swapchain stuff is probably instantly invalided on swapchain recreation lmao, it should probably not be a fn() -> usize, but a fn(&Self) -> usize. Or we just hardcode this for the two cases, swapchain images, and frames_in_flight
-                {
-                    let swapchain_loader = self.swapchain_loader.clone();
-                    let swapchain = self.swapchain;
-                    let semaphore = self.present_complete_semaphore;
-                    move || swapchain_loader.acquire_next_image(swapchain, u64::MAX, semaphore, vk::Fence::null()).unwrap().0 as usize
-                    // TODO: Right now we're kinda hard-coding acquire_next_image in begin/commit render, which makes us acquire twice per frame, this is very probably wrong
-                }
-            },
-        )
-    }
+    // TODO[multi-surface-support]: Use a Surface -> Swapchain map
+    // pub fn get_swapchain_images(&self) -> (RedHotStageImage, impl Fn() -> usize) {
+    //     (
+    //         RedHotStageImage::Images([
+    //             RedHotImageInfo { view: self.swapchain_image_views[0], width: self.window_width, height: self.window_height, format: self.swapchain_image_format },
+    //             RedHotImageInfo { view: self.swapchain_image_views[1], width: self.window_width, height: self.window_height, format: self.swapchain_image_format },
+    //             RedHotImageInfo { view: self.swapchain_image_views[2], width: self.window_width, height: self.window_height, format: self.swapchain_image_format },
+    //         ]),
+    //         unsafe {
+    //             // TODO: Safety
+    //             // NOTE: The swapchain stuff is probably instantly invalided on swapchain recreation lmao, it should probably not be a fn() -> usize, but a fn(&Self) -> usize. Or we just hardcode this for the two cases, swapchain images, and frames_in_flight
+    //             {
+    //                 let swapchain_loader = self.swapchain_loader.clone();
+    //                 let swapchain = self.swapchain;
+    //                 let semaphore = self.present_complete_semaphore;
+    //                 move || swapchain_loader.acquire_next_image(swapchain, u64::MAX, semaphore, vk::Fence::null()).unwrap().0 as usize
+    //                 // TODO: Right now we're kinda hard-coding acquire_next_image in begin/commit render, which makes us acquire twice per frame, this is very probably wrong
+    //             }
+    //         },
+    //     )
+    // }
 
-    pub unsafe fn create_image(&self, width: u32, height: u32, format: vk::Format, usage: vk::ImageUsageFlags, memory_flags: vk::MemoryPropertyFlags) -> RedHotStageImages<0> {
+    pub unsafe fn create_image(&self, width: u32, height: u32, format: vk::Format, usage: vk::ImageUsageFlags, memory_flags: vk::MemoryPropertyFlags) -> RedHotStageImage {
         let image = self
             .device
             .create_image(
@@ -651,24 +637,24 @@ where Vertex: Copy
             )
             .unwrap();
 
-        RedHotStageImages::Image(RedHotImageInfo { view: image_view, width, height, format })
+        RedHotStageImage::Image(RedHotImageInfo { view: image_view, width, height, format })
     }
 
-    pub unsafe fn register_stage<const N_VERTEX_ATTRIBUTE_DESCRIPTIONS: usize, const N_IMAGES: usize, const N_CLEAR_VALUES: usize>(
+    pub unsafe fn register_stage<const N_VERTEX_ATTRIBUTE_DESCRIPTIONS: usize, const N_CLEAR_VALUES: usize>(
         &mut self,
         name: String,
         vertex_shader_bytes: &[u8],
         fragment_shader_bytes: &[u8],
+        rasterization_state: vk::PipelineRasterizationStateCreateInfo,
         depth_stencil_state: PipelineDepthStencilStateCreateInfo,
         color_blend_state: PipelineColorBlendStateCreateInfo,
         vertex_attribute_descriptions: [VertexInputAttributeDescription; N_VERTEX_ATTRIBUTE_DESCRIPTIONS],
-        images: &[&RedHotStageImages<N_IMAGES>],
-        img_index_fn: Option<Box<dyn Fn() -> usize>>,
+        images: &[&RedHotStageImage],
         attachments: &[AttachmentDescription],
         clear_values: [ClearValue; N_CLEAR_VALUES],
         subpass_description: &[SubpassDescription],
         depedencies: &[SubpassDependency],
-        img_textures: &[(&RedHotStageImages<0>, SamplerCreateInfo)],
+        img_textures: &[(&RedHotStageImage, SamplerCreateInfo)],
     ) -> StageIndex {
         let render_pass = self
             .device
@@ -679,10 +665,9 @@ where Vertex: Copy
             .unwrap();
 
         println!("Registering stage: {name}");
-        if N_IMAGES > 1 {
-            assert!(img_index_fn.is_some());
-        }
-        let n_framebuffers = usize::max(1, N_IMAGES);
+
+        let is_presentable_stage = images.iter().any(|x| matches!(x, RedHotStageImage::SwapchainImage()));
+        let n_framebuffers = if is_presentable_stage { 3 } else { 1 };
 
         let framebuffers: Vec<_> = (0..n_framebuffers)
             .map(|i| {
@@ -692,8 +677,8 @@ where Vertex: Copy
 
                 for img in images.iter() {
                     let img_info = match img {
-                        RedHotStageImages::Images(img_infos) => &img_infos[i],
-                        RedHotStageImages::Image(img_info) => img_info,
+                        RedHotStageImage::Image(img_info) => img_info,
+                        RedHotStageImage::SwapchainImage() => &RedHotImageInfo { view: self.swapchain_image_views[i], width, height, format: self.swapchain_image_format }, // TODO[multi-surface-support]: This should depend on surface
                     };
                     width = u32::min(width, img_info.width);
                     height = u32::min(width, img_info.height);
@@ -815,8 +800,8 @@ where Vertex: Copy
                         .image_info(&[*vk::DescriptorImageInfo::builder()
                             .sampler(sampler)
                             .image_view(match img {
-                                RedHotStageImages::Image(img_info) => img_info.view,
-                                RedHotStageImages::Images(_) => panic!("Expected singluar image as texture, multiple frames-in-flight is not supported for textures"),
+                                RedHotStageImage::Image(img_info) => img_info.view,
+                                RedHotStageImage::SwapchainImage() => todo!(), // TODO[presentable-images]: This needs to know about the associated rederers swapchain image views, if such exist?
                             })
                             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)])],
                     &[],
@@ -834,6 +819,7 @@ where Vertex: Copy
                         vertex_shader_module,
                         fragment_shader_module,
                         pipeline_layout,
+                        rasterization_state: rasterization_state,
                         depth_stencil_state: depth_stencil_state,
                         color_blend_state: color_blend_state,
                     },
@@ -842,7 +828,6 @@ where Vertex: Copy
                 object_descriptor_set,
                 render_pass: render_pass,
                 framebuffers: framebuffers,
-                img_index_fn: img_index_fn,
                 clear_values: Box::new(clear_values),
             }
         });
@@ -984,22 +969,22 @@ where Vertex: Copy
         &self.registered_meshes.get(Into::<usize>::into(meshi)).unwrap_or_else(|| panic!("Use of unregistered mesh: {meshi}")).0
     }
 
-    pub fn begin_render<DU>(&mut self, draw_uniform: DU)
+    pub fn render_begin<DU>(&mut self, draw_uniform: DU)
     where DU: Copy {
         // println!("Starting frame");
 
         unsafe {
             assert!(self.current_render.is_none(), "Call render_commit before begin_render");
-            let (present_index, _) = self.swapchain_loader.acquire_next_image(self.swapchain, std::u64::MAX, self.present_complete_semaphore, vk::Fence::null()).unwrap();
+            let (present_index, swapchain_suboptimal) = self.swapchain_loader.acquire_next_image(self.swapchain, std::u64::MAX, self.present_complete_semaphore, vk::Fence::null()).unwrap();
+            if swapchain_suboptimal {
+                println!("Swapchain suboptimal");
+            }
 
             self.device.wait_for_fences(&[self.command_buffer_reuse_fence], true, std::u64::MAX).expect("Wait for fence failed.");
-
             self.device.reset_fences(&[self.command_buffer_reuse_fence]).expect("Reset fences failed.");
-
             self.device.reset_command_buffer(self.command_buffer, vk::CommandBufferResetFlags::RELEASE_RESOURCES).expect("Reset command buffer failed.");
 
             let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
-
             self.device.begin_command_buffer(self.command_buffer, &command_buffer_begin_info).expect("Begin commandbuffer");
 
             if self.should_regenerate_vertex_buffer {
@@ -1084,10 +1069,10 @@ where Vertex: Copy
     {
         let stage = &mut self.stages[stagei.0];
         // println!("Render stage: {}", stage.name);
-        let stage_framebuffer = unsafe { stage.get_framebuffer() };
+        let current_render = self.current_render.as_mut().expect("Call render_begin before calling render_stage");
+        let stage_framebuffer = stage.get_framebuffer(current_render.present_index);
         let scissors = [*Rect2D::builder().extent(*vk::Extent2D::builder().width(stage_framebuffer.width).height(stage_framebuffer.height))];
         let viewports = [vk::Viewport { x: 0.0, y: 0.0, width: stage_framebuffer.width as f32, height: stage_framebuffer.height as f32, min_depth: 0.0, max_depth: 1.0 }];
-        let current_render = self.current_render.as_mut().expect("Call render_begin before calling render_stage");
 
         let clear_values = stage.clear_values.clone(); // TODO: figure out how to avoid this
 
@@ -1098,7 +1083,7 @@ where Vertex: Copy
             .clear_values(&clear_values);
 
         unsafe {
-            let pipeline = stage.get_pipeline::<Vertex>(&self.device);
+            let pipeline = stage.get_pipeline::<Vertex>(&self.device, current_render.present_index);
 
             let stage_uniform_buffer = self
                 .device
@@ -1240,23 +1225,26 @@ where Vertex: Copy
 
             let command_buffers = vec![self.command_buffer];
 
-            let wait_semaphores = [self.present_complete_semaphore]; //. Only named to not drop while in use
-            let signal_semaphores = [self.rendering_complete_semaphore]; //. Only named to not drop while in use
+            self.device
+                .queue_submit(
+                    self.present_queue,
+                    &[vk::SubmitInfo::builder()
+                        .wait_semaphores(&[self.present_complete_semaphore])
+                        .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
+                        .command_buffers(&command_buffers)
+                        .signal_semaphores(&[self.rendering_complete_semaphores[current_render.present_index as usize]])
+                        .build()],
+                    self.command_buffer_reuse_fence,
+                )
+                .expect("queue submit failed.");
 
-            let submit_info = vk::SubmitInfo::builder()
-                .wait_semaphores(&wait_semaphores)
-                .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
-                .command_buffers(&command_buffers)
-                .signal_semaphores(&signal_semaphores);
-
-            self.device.queue_submit(self.present_queue, &[submit_info.build()], self.command_buffer_reuse_fence).expect("queue submit failed.");
-
-            let wait_semaphors = [self.rendering_complete_semaphore];
-            let image_indices = [current_render.present_index];
             self.swapchain_loader
                 .queue_present(
                     self.present_queue,
-                    &vk::PresentInfoKHR::builder().wait_semaphores(&wait_semaphors).swapchains(&[self.swapchain]).image_indices(&image_indices),
+                    &vk::PresentInfoKHR::builder()
+                        .wait_semaphores(&[self.rendering_complete_semaphores[current_render.present_index as usize]])
+                        .swapchains(&[self.swapchain])
+                        .image_indices(&[current_render.present_index]),
                 )
                 .unwrap();
 
