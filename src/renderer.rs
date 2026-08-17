@@ -211,7 +211,7 @@ where Vertex: Copy
 
     device_memory_properties: PhysicalDeviceMemoryProperties,
     present_complete_semaphore: Semaphore,
-    rendering_complete_semaphores: [Semaphore; 3], // NOTE: One per swapchain image, see: https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html
+    rendering_complete_semaphores: Vec<Semaphore>, // NOTE: One per swapchain image, see: https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html
     present_queue: Queue,
 
     command_buffer: CommandBuffer,
@@ -319,6 +319,7 @@ unsafe fn swapchain_stuff(
         .unwrap();
 
     let images = swapchain_loader.get_swapchain_images(swapchain).unwrap();
+    println!("swapchain_image_count: {}", images.len());
 
     let image_views: Vec<vk::ImageView> = images
         .iter()
@@ -436,11 +437,6 @@ where Vertex: Copy
 
             //# Semaphores and Fences
             let present_complete_semaphore = device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap();
-            let rendering_complete_semaphores = [
-                device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap(),
-                device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap(),
-                device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap(),
-            ];
 
             let command_buffer_reuse_fence = device.create_fence(&vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED), None).expect("Create fence failed.");
             device.reset_fences(&[command_buffer_reuse_fence]).expect("Reset fences failed.");
@@ -490,6 +486,10 @@ where Vertex: Copy
             //# Swapchian images
             let (swapchain_loader, swapchain, swapchain_image_format, swapchain_image_views, swapchain_images) =
                 swapchain_stuff(&device, &instance, &entry, pdevice, surface, window_width, window_height);
+
+            let rendering_complete_semaphores = (0..swapchain_images.len()).map(|_|
+                device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap()
+            ).collect::<Vec<_>>();
 
             //# Descriptors set for per frame DrawUniform
             let draw_descriptor_set_layout = device
@@ -667,7 +667,7 @@ where Vertex: Copy
         println!("Registering stage: {name}");
 
         let is_presentable_stage = images.iter().any(|x| matches!(x, RedHotStageImage::SwapchainImage()));
-        let n_framebuffers = if is_presentable_stage { 3 } else { 1 };
+        let n_framebuffers = if is_presentable_stage { self.swapchain_images.len() } else { 1 };
 
         let framebuffers: Vec<_> = (0..n_framebuffers)
             .map(|i| {
