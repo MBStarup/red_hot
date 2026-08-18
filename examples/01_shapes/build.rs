@@ -94,9 +94,7 @@ fn main() {
 
     fs::create_dir_all(dest_path!()).expect(concat!("Failed to create dir: ", dest_path!()));
     if let Err(err) = build_shader(ShaderStage::Vert, concat!(src_path!(), "/vert.glsl"), concat!(dest_path!(), "/vert.spv")) {panic!("{}", err)};
-    if let Err(err) = build_shader(ShaderStage::Vert, concat!(src_path!(), "/shadow_vert.glsl"), concat!(dest_path!(), "/shadow_vert.spv")) {panic!("{}", err)};
     if let Err(err) = build_shader(ShaderStage::Frag, concat!(src_path!(), "/frag.glsl"), concat!(dest_path!(), "/frag.spv")) {panic!("{}", err)};
-    if let Err(err) = build_shader(ShaderStage::Frag, concat!(src_path!(), "/shadow_frag.glsl"), concat!(dest_path!(), "/shadow_frag.spv")) {panic!("{}", err)};
 }
 
 enum ShaderStage {
