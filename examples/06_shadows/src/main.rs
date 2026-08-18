@@ -89,7 +89,7 @@ fn main() {
                 Vertex { pos: [ 1.0,  0.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
                 Vertex { pos: [-1.0,  0.0,  1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] }, //. DOWN (LEFT/FRONT)
                 Vertex { pos: [-1.0,  0.0, -1.0, 1.0], normal: [ 0.0, -1.0,  0.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
-                ];
+            ];
             let indices = (0..vertices.len() as u32).collect();
             Mesh::<Vertex> {vertices, indices}
         };
@@ -133,7 +133,7 @@ fn main() {
                 Vertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
                 Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] }, //. FRONT (RIGHT/DOWN)
                 Vertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0] },
-                ];
+            ];
             let indices: Vec<u32> = (0..vertices.len() as u32).collect();
             (Mesh::<Vertex> {vertices: vertices.clone(), indices: indices.clone()}, Mesh::<Vertex> {vertices: vertices.into_iter().rev().map(|v| Vertex{ pos: v.pos , normal: [-v.normal[0], -v.normal[1], -v.normal[2], 1.0], color: v.color }).collect(), indices})
         };
@@ -147,7 +147,7 @@ fn main() {
                 Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
                 Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. UP (RIGHT/BACK)
                 Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
-                ];
+            ];
             let indices = (0..vertices.len() as u32).collect();
             Mesh::<Vertex> {vertices, indices}
         };
