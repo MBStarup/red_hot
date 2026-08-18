@@ -627,7 +627,7 @@ where Vertex: Copy
             .device
             .create_image_view(
                 &vk::ImageViewCreateInfo::builder()
-                    .subresource_range(vk::ImageSubresourceRange::builder().aspect_mask(vk::ImageAspectFlags::DEPTH).level_count(1).layer_count(1).build())
+                    .subresource_range(vk::ImageSubresourceRange::builder().aspect_mask(vk::ImageAspectFlags::DEPTH).level_count(1).layer_count(1).build()) // TODO: For now this has only been used with depth images, figure out wtf an aspect_mask is, and what that needs to be for other images
                     .image(image)
                     .format(format)
                     .view_type(vk::ImageViewType::TYPE_2D),
@@ -676,10 +676,12 @@ where Vertex: Copy
                 for img in images.iter() {
                     let img_info = match img {
                         RedHotStageImage::Image(img_info) => img_info,
-                        RedHotStageImage::SwapchainImage() => &RedHotImageInfo { view: self.swapchain_image_views[i], width, height, format: self.swapchain_image_format }, // TODO[multi-surface-support]: This should depend on surface
+                        RedHotStageImage::SwapchainImage() => {
+                            &RedHotImageInfo { view: self.swapchain_image_views[i], width: self.window_width, height: self.window_height, format: self.swapchain_image_format }
+                        }, // TODO[multi-surface-support]: This should depend on surface
                     };
                     width = u32::min(width, img_info.width);
-                    height = u32::min(width, img_info.height);
+                    height = u32::min(height, img_info.height);
                     views.push(img_info.view);
                 }
 
