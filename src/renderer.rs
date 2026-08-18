@@ -210,7 +210,7 @@ where Vertex: Copy
     swapchain_images: Vec<vk::Image>,
 
     device_memory_properties: PhysicalDeviceMemoryProperties,
-    present_complete_semaphore: Semaphore,
+    present_complete_semaphore: Semaphore,         // TODO[multi-buffering]: If we double or tribble buffer, we need one of these per
     rendering_complete_semaphores: Vec<Semaphore>, // NOTE: One per swapchain image, see: https://docs.vulkan.org/guide/latest/swapchain_semaphore_reuse.html
     present_queue: Queue,
 
@@ -1063,6 +1063,7 @@ where Vertex: Copy
     }
 
     pub fn render_stage<SU, OU>(&mut self, stagei: StageIndex, stage_uniform: SU, meshis: Vec<MeshIndex>, object_uniforms: Vec<OU>)
+    // TODO[type-safety]: zip meshis and object_uniforms into a single Vec<(MeshIndex, OU)> to ensure equal lenght on a type level
     where
         SU: Copy,
         OU: Copy,
@@ -1196,14 +1197,24 @@ where Vertex: Copy
                 self.device.cmd_bind_vertex_buffers(self.command_buffer, 0, &[self.vertex_buffer.expect("No Vertex buffer")], &[0]);
                 self.device.cmd_bind_index_buffer(self.command_buffer, self.index_buffer.expect("No index buffer"), 0, vk::IndexType::UINT32);
 
+                self.device.cmd_bind_descriptor_sets(
+                    self.command_buffer,
+                    vk::PipelineBindPoint::GRAPHICS,
+                    stage.pipeline.create_info.pipeline_layout,
+                    0, //. Per-Draw uniforms are at 0
+                    //TODO[perf]: We don't actually have to rebind the Per-Draw uniform desriptor set along with the Per-Stage uniforms each stage, since all stages share this descriptor set at the start of their pipeline_layout it is sufficient to bind it once in render_begin, see: https://docs.vulkan.org/spec/latest/chapters/descriptorsets.html#descriptors-compatibility
+                    &[self.draw_descriptor_set, stage.stage_descriptor_set],
+                    &[],
+                );
+
                 for (i, meshi) in meshis.iter().enumerate() {
                     let (mesh, index_offset, vertex_offset) = self.registered_meshes.get(meshi.0).unwrap();
                     self.device.cmd_bind_descriptor_sets(
                         self.command_buffer,
                         vk::PipelineBindPoint::GRAPHICS,
                         stage.pipeline.create_info.pipeline_layout,
-                        0,
-                        &[self.draw_descriptor_set, stage.stage_descriptor_set, stage.object_descriptor_set],
+                        2, //. Per-Object uniforms are at 2
+                        &[stage.object_descriptor_set],
                         &[(i * object_uniform_stride as usize) as u32],
                     );
 
