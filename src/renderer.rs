@@ -487,9 +487,7 @@ where Vertex: Copy
             let (swapchain_loader, swapchain, swapchain_image_format, swapchain_image_views, swapchain_images) =
                 swapchain_stuff(&device, &instance, &entry, pdevice, surface, window_width, window_height);
 
-            let rendering_complete_semaphores = (0..swapchain_images.len()).map(|_|
-                device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap()
-            ).collect::<Vec<_>>();
+            let rendering_complete_semaphores = (0..swapchain_images.len()).map(|_| device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap()).collect::<Vec<_>>();
 
             //# Descriptors set for per frame DrawUniform
             let draw_descriptor_set_layout = device
