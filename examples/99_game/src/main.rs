@@ -7,12 +7,12 @@ use std::{
 };
 
 use ash::vk;
-use glb::Gltf;
+use glb::{AnimationTargetPath, Gltf};
 use rand::{RngExt, SeedableRng};
 
 use red_hot::{
     math::{inverse_perspective_matrix, perspective_matrix, Mat4x4, Quaternion, Transform, Vec3},
-    renderer::{Mesh, MeshIndex, Renderer},
+    renderer::{ImageSize, Mesh, MeshIndex, RedHotImageCreateInfo, Renderer},
 };
 
 use winit::{
@@ -136,11 +136,11 @@ fn animations_from_gltf_data<'a>(gltf_header: &Gltf, gltf_buffer: &[u8]) -> Vec<
 
                 // TODO: This is a bandaid fix
                 let output_data: Vec3or4Array;
-                match channel.target.path.as_str() {
-                    "rotation" => {
+                match channel.target.path {
+                    AnimationTargetPath::ROTATION => {
                         output_data = Vec3or4Array::Vec4Array(unsafe { std::slice::from_raw_parts(output_data_bytes.as_ptr() as *const [f32; 4], output_data_bytes.len() / (size_of::<[f32; 4]>())) })
                     },
-                    "translation" | "scale" => {
+                    AnimationTargetPath::TRANSLATION | AnimationTargetPath::SCALE => {
                         output_data = Vec3or4Array::Vec3Array(unsafe { std::slice::from_raw_parts(output_data_bytes.as_ptr() as *const [f32; 3], output_data_bytes.len() / (size_of::<[f32; 3]>())) })
                     },
                     x => panic!("Unexpected animation target path when parsing animation: {x:?}"),
@@ -222,21 +222,23 @@ fn animated_skeleton(Animation { name: _, animated_targets, inverse_bind_matrici
                             lerp_t = (anim_time - timestamps[anim_from]) / (timestamps[anim_to] - timestamps[anim_from]);
                         }
                     }
-                    match target.path.as_str() {
-                        "translation" => {
+                    match target.path {
+                        AnimationTargetPath::TRANSLATION => {
                             let from = Into::<&[[f32; 3]]>::into(*keyframes)[anim_from].into();
                             let to = Into::<&[[f32; 3]]>::into(*keyframes)[anim_to].into();
                             let result = Vec3::lerp(from, to, lerp_t);
                             bone_transform.position = result;
                         },
-                        "rotation" => {
+                        AnimationTargetPath::ROTATION => {
                             let from = Into::<&[[f32; 4]]>::into(*keyframes)[anim_from].into();
                             let to = Into::<&[[f32; 4]]>::into(*keyframes)[anim_to].into();
                             let result = Quaternion::lerp(from, to, lerp_t);
                             bone_transform.rotation = result;
                         },
-                        "scale" => bone_transform.scale = Vec3::lerp(Into::<&[[f32; 3]]>::into(*keyframes)[anim_from].into(), Into::<&[[f32; 3]]>::into(*keyframes)[anim_to].into(), lerp_t),
-                        x => println!("Not animating property: {x}"),
+                        AnimationTargetPath::SCALE => {
+                            bone_transform.scale = Vec3::lerp(Into::<&[[f32; 3]]>::into(*keyframes)[anim_from].into(), Into::<&[[f32; 3]]>::into(*keyframes)[anim_to].into(), lerp_t)
+                        },
+                        x => println!("Not animating property: {x:?}"),
                     }
                 }
                 joint_transforms.push(bone_transform.get_matrix());
@@ -284,7 +286,8 @@ fn screen_to_direction((x, y): (f32, f32), camera_transform: &Transform<f32>, in
     (cursor_in_viewspace).normalize()
 }
 
-fn main() {
+#[rustfmt::skip] fn main() { unsafe { umain() } }
+unsafe fn umain() {
     assert_eq!(BONES_PER_VERT, 4, "VertexInputAttributeDescription not generalized");
     println!("Example 99: game");
     let mut window_width: u32 = 1600;
@@ -294,6 +297,13 @@ fn main() {
     #[derive(Clone, Debug, Copy)]
     #[repr(C)]
     struct DrawUniform {
+        _dummy: f32,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Debug, Copy)]
+    #[repr(C)]
+    struct RenderStageUniform {
         view_mat: Mat4x4<f32>,
         proj_mat: Mat4x4<f32>,
         light_dir: Vec3<f32>,
@@ -445,11 +455,47 @@ fn main() {
     window.set_cursor_visible(false);
 
     //# Set up renderer
+    let mut renderer = Renderer::<AnimatedVertex>::new(&window, window_width, window_height);
+
+    let depth_image = renderer.register_image(RedHotImageCreateInfo {
+        size: ImageSize::SurfaceSize,
+        format: vk::Format::D32_SFLOAT,
+        usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        memory_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        image_aspect_mask: vk::ImageAspectFlags::DEPTH,
+    });
+
     #[rustfmt::skip]
-    let mut renderer = Renderer::<AnimatedVertex, _>::new(
-        &window,
-        window_width,
-        window_height,
+    let default_stage = renderer.register_stage(
+        "Default".to_owned(),
+        include_bytes!("./shader/vert.spv"),
+        include_bytes!("./shader/frag.spv"),
+        vk::PipelineRasterizationStateCreateInfo {
+            cull_mode: vk::CullModeFlags::BACK,
+            front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+            line_width: 1.0,
+            polygon_mode: vk::PolygonMode::FILL,
+            ..Default::default()
+        },
+        vk::PipelineDepthStencilStateCreateInfo {
+            depth_test_enable: 1,
+            depth_write_enable: 1,
+            depth_compare_op: vk::CompareOp::LESS,
+            front: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+            back: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+            max_depth_bounds: 1.0,
+            ..Default::default()
+        },
+        *vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
+            blend_enable: 0,
+            src_color_blend_factor: vk::BlendFactor::SRC_COLOR,
+            dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_DST_COLOR,
+            color_blend_op: vk::BlendOp::ADD,
+            src_alpha_blend_factor: vk::BlendFactor::ZERO,
+            dst_alpha_blend_factor: vk::BlendFactor::ZERO,
+            alpha_blend_op: vk::BlendOp::ADD,
+            color_write_mask: vk::ColorComponentFlags::RGBA,
+        }]),
         [
             vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 },
             vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 },
@@ -467,10 +513,41 @@ fn main() {
             vk::VertexInputAttributeDescription { location:  9, binding: 0, format: vk::Format::R32_SFLOAT, offset: (12 * 32 + 4 * 8 + 2 * 32) / 8 as u32 },
             vk::VertexInputAttributeDescription { location: 10, binding: 0, format: vk::Format::R32_SFLOAT, offset: (12 * 32 + 4 * 8 + 3 * 32) / 8 as u32 },
         ],
+        vec![red_hot::renderer::RedHotStageImage::SwapchainImage(), red_hot::renderer::RedHotStageImage::Image(depth_image)],
+        &[
+            vk::AttachmentDescription {
+                format: renderer.swapchain_image_format,
+                samples: vk::SampleCountFlags::TYPE_1,
+                load_op: vk::AttachmentLoadOp::CLEAR,
+                store_op: vk::AttachmentStoreOp::STORE,
+                final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                ..Default::default()
+            },
+            vk::AttachmentDescription {
+                format: vk::Format::D32_SFLOAT,
+                samples: vk::SampleCountFlags::TYPE_1,
+                load_op: vk::AttachmentLoadOp::CLEAR,
+                final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                ..Default::default()
+            },
+        ],
+        [
+            vk::ClearValue { color: vk::ClearColorValue { float32: [0.05, 0.01, 0.02, 1.0] } }, //. was renderer.clear_color
+            vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } },
+        ],
+        &[*vk::SubpassDescription::builder()
+            .color_attachments(&[vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL }])
+            .depth_stencil_attachment(&vk::AttachmentReference { attachment: 1, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL })
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)],
+        &[vk::SubpassDependency {
+            src_subpass: vk::SUBPASS_EXTERNAL,
+            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            ..Default::default()
+        }],
+        &[],
     );
-    renderer.set_vertex_shader(include_bytes!("./shader/vert.spv"));
-    renderer.set_fragment_shader(include_bytes!("./shader/frag.spv"));
-    renderer.clear_color = [0.05, 0.01, 0.02, 1.0];
 
     let cube_meshi = renderer.register_mesh(cube_mesh);
 
@@ -615,11 +692,14 @@ fn main() {
                     let (x, y) = cursor;
                     cursor = (f32::clamp(x + (mouse_x as f32) * cursor_speed, -1.0, 1.0), f32::clamp(y + (mouse_y as f32) * cursor_speed, -1.0, 1.0));
                 },
-                Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
-                    window_width = size.width;
-                    window_height = size.height;
-                    // BUG: On GLaDOS (Debian KDE Wayland) windows get moved instead of resized, and the size is incomprehensible?!?!
-                    // TODO: update swapchain and stuff in renderer
+                Event::WindowEvent { event: WindowEvent::Resized(_physical_size), .. } => {
+                    let size = window.inner_size();
+                    if window_width != size.width || window_height != size.height {
+                        window_width = size.width;
+                        window_height = size.height;
+                        // BUG: On GLaDOS (Debian KDE Wayland) windows get moved instead of resized, and the size is incomprehensible?!?!
+                        renderer.resize_window(window_width, window_height);
+                    }
                 },
                 Event::WindowEvent { event: WindowEvent::Focused(focus), .. } => {
                     focused = focus;
@@ -637,8 +717,10 @@ fn main() {
                         .collect();
 
                     //# Render the objects
-                    renderer.render(
-                        DrawUniform { view_mat: camera_transform.get_inverse_matrix(), proj_mat, light_dir: light_dir, ambient_light: 0.5 },
+                    renderer.render_begin(DrawUniform { _dummy: 0.0 });
+                    renderer.render_stage(
+                        default_stage,
+                        RenderStageUniform { view_mat: camera_transform.get_inverse_matrix(), proj_mat, light_dir: light_dir, ambient_light: 0.5 },
                         animated_objects.iter().map(|AnimatedObject { object, animation_handler: _ }| object.meshi).chain(vec![cube_meshi]).collect(),
                         animated_objects
                             .iter()
@@ -650,6 +732,7 @@ fn main() {
                             }])
                             .collect(),
                     );
+                    renderer.render_commit();
                 },
                 Event::RedrawEventsCleared => *control_flow = ControlFlow::Exit, //. "return"
                 _ => (),                                                         //. ignore other events
