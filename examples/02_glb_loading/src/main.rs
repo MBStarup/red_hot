@@ -8,7 +8,7 @@ use std::{
 use ash::vk;
 use red_hot::{
     math::{perspective_matrix, Mat4x4, Quaternion, Transform, Vec3},
-    renderer::{Mesh, MeshIndex, Renderer},
+    renderer::{ImageSize, Mesh, MeshIndex, RedHotImageCreateInfo, Renderer},
 };
 
 use winit::{
@@ -18,7 +18,8 @@ use winit::{
     window::WindowBuilder,
 };
 
-fn main() {
+#[rustfmt::skip] fn main() { unsafe { umain() } }
+unsafe fn umain() {
     println!("Example 02: glb loading");
     let mut window_width: u32 = 2000;
     let mut window_height: u32 = 1200;
@@ -50,10 +51,9 @@ fn main() {
     let mut verts = Vec::<Vertex>::with_capacity(vert_count);
     for vert in 0..vert_count {
         //? Does this create the struct on stack and then copy, or is it able to be smart and emblace_back due to ownership semantics?
-        let pos3 = unsafe { position_data_ptr.offset(vert as isize).read_unaligned() }; //. This performs a copy maybe?
-        let norm3 = unsafe { normal_data_ptr.offset(vert as isize).read_unaligned() }; //. This performs a copy maybe?
+        let pos3 = position_data_ptr.offset(vert as isize).read_unaligned(); //. This performs a copy maybe?
+        let norm3 = normal_data_ptr.offset(vert as isize).read_unaligned(); //. This performs a copy maybe?
         verts.push(Vertex {
-            #[rustfmt::skip]
             // TODO: make [f32;3] -> [f32;4] function/macro
             pos: [pos3[0], pos3[1], pos3[2], 1.0],
             normal: [norm3[0], norm3[1], norm3[2], 1.0],
@@ -66,7 +66,7 @@ fn main() {
     let index_data_bytes = gltf_data.0.access_buffer(&gltf_data.1, index_accessor);
     let index_data_ptr = index_data_bytes.as_ptr() as *const u16;
     let index_data_len = index_data_bytes.len() / (size_of::<u16>() * 1);
-    let index_data: &[u16] = unsafe { std::slice::from_raw_parts(index_data_ptr, index_data_len) };
+    let index_data: &[u16] = std::slice::from_raw_parts(index_data_ptr, index_data_len);
 
     let imported_mesh = Mesh { vertices: verts, indices: index_data.iter().map(|&e| e as u32).collect() };
 
@@ -80,10 +80,18 @@ fn main() {
         color: [f32; 4],
     }
 
+    //. Fake uniform not used by the shader, zero sized uniforms trips up the renderer atm
     #[allow(dead_code)]
     #[derive(Clone, Debug, Copy)]
     #[repr(C)]
     struct DrawUniform {
+        _dummy: f32,
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Debug, Copy)]
+    #[repr(C)]
+    struct RenderStageUniform {
         view_mat: Mat4x4<f32>,
         proj_mat: Mat4x4<f32>,
         light_dir: Vec3<f32>,
@@ -102,7 +110,6 @@ fn main() {
         transform: Transform<f32>,
         mesh: MeshIndex,
     }
-
     let mut position = Vec3 { x: 0.0, y: 0.0, z: -10.0 };
     let mut cam_yaw = 0.0;
     let mut cam_pitch = 0.0;
@@ -118,26 +125,93 @@ fn main() {
     window.set_cursor_grab(winit::window::CursorGrabMode::Confined).unwrap();
     window.set_cursor_visible(false);
 
-    let mut renderer = Renderer::<Vertex, _>::new(
-        &window,
-        window_width,
-        window_height,
+    let mut renderer = Renderer::<Vertex>::new(&window, window_width, window_height);
+
+    let depth_image = renderer.register_image(RedHotImageCreateInfo {
+        size: ImageSize::SurfaceSize,
+        format: vk::Format::D32_SFLOAT,
+        usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+        memory_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        image_aspect_mask: vk::ImageAspectFlags::DEPTH,
+    });
+
+    let default_stage = renderer.register_stage(
+        "Default".to_owned(),
+        include_bytes!("./shader/vert.spv"),
+        include_bytes!("./shader/frag.spv"),
+        vk::PipelineRasterizationStateCreateInfo {
+            cull_mode: vk::CullModeFlags::BACK,
+            front_face: vk::FrontFace::COUNTER_CLOCKWISE,
+            line_width: 1.0,
+            polygon_mode: vk::PolygonMode::FILL,
+            ..Default::default()
+        },
+        vk::PipelineDepthStencilStateCreateInfo {
+            depth_test_enable: 1,
+            depth_write_enable: 1,
+            depth_compare_op: vk::CompareOp::LESS,
+            front: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+            back: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+            max_depth_bounds: 1.0,
+            ..Default::default()
+        },
+        *vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
+            blend_enable: 0,
+            src_color_blend_factor: vk::BlendFactor::SRC_COLOR,
+            dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_DST_COLOR,
+            color_blend_op: vk::BlendOp::ADD,
+            src_alpha_blend_factor: vk::BlendFactor::ZERO,
+            dst_alpha_blend_factor: vk::BlendFactor::ZERO,
+            alpha_blend_op: vk::BlendOp::ADD,
+            color_write_mask: vk::ColorComponentFlags::RGBA,
+        }]),
         [
             vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
             vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
             vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
         ],
+        vec![red_hot::renderer::RedHotStageImage::SwapchainImage(), red_hot::renderer::RedHotStageImage::Image(depth_image)],
+        &[
+            vk::AttachmentDescription {
+                format: renderer.swapchain_image_format,
+                samples: vk::SampleCountFlags::TYPE_1,
+                load_op: vk::AttachmentLoadOp::CLEAR,
+                store_op: vk::AttachmentStoreOp::STORE,
+                final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                ..Default::default()
+            },
+            vk::AttachmentDescription {
+                format: vk::Format::D32_SFLOAT,
+                samples: vk::SampleCountFlags::TYPE_1,
+                load_op: vk::AttachmentLoadOp::CLEAR,
+                final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                ..Default::default()
+            },
+        ],
+        [
+            vk::ClearValue { color: vk::ClearColorValue { float32: [0.05, 0.00, 0.00, 1.0] } }, //. was renderer.clear_color
+            vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } },
+        ],
+        &[*vk::SubpassDescription::builder()
+            .color_attachments(&[vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL }])
+            .depth_stencil_attachment(&vk::AttachmentReference { attachment: 1, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL })
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)],
+        &[vk::SubpassDependency {
+            src_subpass: vk::SUBPASS_EXTERNAL,
+            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            ..Default::default()
+        }],
+        &[],
     );
-    renderer.set_vertex_shader(include_bytes!("./shader/vert.spv"));
-    renderer.set_fragment_shader(include_bytes!("./shader/frag.spv"));
+
     let imported_meshi = renderer.register_mesh(imported_mesh);
 
     let mut objects = vec![Object {
         transform: Transform { position: Vec3::<f32> { x: 0.0, y: 0.0, z: 0.0 }, rotation: Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 0.0 }.normalize(), PI), scale: Vec3::one() },
         mesh: imported_meshi,
     }];
-
-    renderer.clear_color = [0.05, 0.00, 0.00, 1.0];
 
     let mut last_time;
     let mut current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
@@ -219,11 +293,14 @@ fn main() {
                     window.set_cursor_visible(!focus);
                 },
                 Event::MainEventsCleared => {
-                    renderer.render(
-                        DrawUniform { view_mat: camera_transform.get_inverse_matrix(), proj_mat, light_dir: light_dir, ambient_light: 0.01 },
+                    renderer.render_begin(DrawUniform { _dummy: 0.0 });
+                    renderer.render_stage(
+                        default_stage,
+                        RenderStageUniform { view_mat: camera_transform.get_inverse_matrix(), proj_mat, light_dir, ambient_light: 0.01 },
                         objects.iter().map(|x| x.mesh).collect(),
                         objects.iter().map(|x| ObjectUniform { model_mat: x.transform.get_matrix() }).collect(),
                     );
+                    renderer.render_commit();
                 },
                 Event::RedrawEventsCleared => *control_flow = ControlFlow::Exit, //. "return"
                 _ => (),                                                         //. ignore other events
