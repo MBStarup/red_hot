@@ -341,7 +341,7 @@ fn main() {
                     samples: vk::SampleCountFlags::TYPE_1,
                     load_op: vk::AttachmentLoadOp::CLEAR,
                     store_op: vk::AttachmentStoreOp::STORE,
-                    final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                    final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                     ..Default::default()
                 },
                 vk::AttachmentDescription {
@@ -388,6 +388,71 @@ fn main() {
                         .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE),
                 ),
             ],
+        );
+        let ui_stage = renderer.register_stage(
+            "UI".to_owned(),
+            include_bytes!("./shader/vert.spv"),
+            include_bytes!("./shader/green_frag.spv"),
+            vk::PipelineRasterizationStateCreateInfo { cull_mode: vk::CullModeFlags::NONE, line_width: 1.0, polygon_mode: vk::PolygonMode::LINE, ..Default::default() },
+            vk::PipelineDepthStencilStateCreateInfo {
+                depth_test_enable: 1,
+                depth_write_enable: 1,
+                depth_compare_op: vk::CompareOp::LESS,
+                front: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+                back: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+                max_depth_bounds: 1.0,
+                ..Default::default()
+            },
+            *vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
+                blend_enable: 0,
+                src_color_blend_factor: vk::BlendFactor::SRC_COLOR,
+                dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_DST_COLOR,
+                color_blend_op: vk::BlendOp::ADD,
+                src_alpha_blend_factor: vk::BlendFactor::ZERO,
+                dst_alpha_blend_factor: vk::BlendFactor::ZERO,
+                alpha_blend_op: vk::BlendOp::ADD,
+                color_write_mask: vk::ColorComponentFlags::RGBA,
+            }]),
+            [
+                vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
+                vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
+                vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
+            ],
+            vec![red_hot::renderer::RedHotStageImage::SwapchainImage(), depth_image],
+            &[
+                vk::AttachmentDescription {
+                    format: renderer.swapchain_image_format,
+                    samples: vk::SampleCountFlags::TYPE_1,
+                    load_op: vk::AttachmentLoadOp::LOAD,
+                    store_op: vk::AttachmentStoreOp::STORE,
+                    final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                    ..Default::default()
+                },
+                vk::AttachmentDescription {
+                    format: vk::Format::D32_SFLOAT,
+                    samples: vk::SampleCountFlags::TYPE_1,
+                    load_op: vk::AttachmentLoadOp::CLEAR,
+                    // initial_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, // TODO: non-undefined initial layout is currently unsupported, as I do not create the barriers to transition them into the correct state before the renderpass begins. In this case it is fine too, as we clear it anyways
+                    final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                    ..Default::default()
+                },
+            ],
+            [
+                vk::ClearValue { color: vk::ClearColorValue { float32: [1.0, 0.0, 0.0, 0.0] } },
+                vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } },
+            ],
+            &[*vk::SubpassDescription::builder()
+                .color_attachments(&[vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL }])
+                .depth_stencil_attachment(&vk::AttachmentReference { attachment: 1, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL })
+                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)],
+            &[vk::SubpassDependency {
+                src_subpass: vk::SUBPASS_EXTERNAL,
+                src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                ..Default::default()
+            }],
+            &[],
         );
 
         let meshes = vec![
@@ -552,6 +617,35 @@ fn main() {
                             light_view_proj_mat2: light_proj_matrix * light_box2.transform.get_inverse_matrix(),
                             light_dir: [light_dir.x, light_dir.y, light_dir.z, 0.0],
                             light_dir2: [light_dir2.x, light_dir2.y, light_dir2.z, 0.0],
+                        },
+                        objects
+                            .iter()
+                            .map(|x| x.mesh)
+                            .chain([
+                                room_box.mesh,
+                                light_box.mesh,
+                                light_box2.mesh,
+                            ])
+                            .collect(),
+                        objects
+                            .iter()
+                            .map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 })
+                            .chain([
+                                ObjectUniform { model_mat: room_box.transform.get_matrix(), is_light: 0 },
+                                ObjectUniform { model_mat: light_box.transform.get_matrix(), is_light: 1 },
+                                ObjectUniform { model_mat: light_box2.transform.get_matrix(), is_light: 1 },
+                            ])
+                            .collect(),
+                    );
+                    renderer.render_stage(
+                        ui_stage,
+                        RenderStageUniform {
+                            view_mat: camera_transform.get_inverse_matrix(),
+                            proj_mat,
+                            light_view_proj_mat: Mat4x4::<f32>::zero(), //. Unused
+                            light_view_proj_mat2: Mat4x4::<f32>::zero(), //. Unused
+                            light_dir: [0.0, 0.0, 0.0, 0.0], //. Unused
+                            light_dir2: [0.0, 0.0, 0.0, 0.0], //. Unused
                         },
                         objects
                             .iter()
