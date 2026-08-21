@@ -231,6 +231,14 @@ where T: num::Num + Real
             z: self.z * (U::one() - t) + other.z * t
         }
     }
+
+    pub fn distance_squared(&self, other: &Vec3<T>) -> T
+    where T: std::ops::Sub<Output = T> + std::ops::Mul<Output = T> + std::ops::Add<Output = T> + Copy {
+        let dx = self.x - other.x;
+        let dy = self.y - other.y;
+        let dz = self.z - other.z;
+        dx * dx + dy * dy + dz * dz
+    }
 }
 
 impl<T> Add for Vec3<T>
@@ -453,6 +461,11 @@ where T: num::Num + Real
 
     pub fn default() -> Transform<T> {
         Transform { position: Vec3::zero(), rotation: Quaternion::identity(), scale: Vec3::one() }
+    }
+
+    pub fn translated(mut self, offset: Vec3<T>) -> Transform<T> {
+        self.position += offset;
+        self
     }
 }
 
