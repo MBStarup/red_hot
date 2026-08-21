@@ -2,15 +2,18 @@
 #define SKELETON_SIZE 24
 #define BONES_PER_VERT 4
 
-
 layout(set = 0, binding = 0) uniform DrawUniform {
+    float _dummy;
+} draw_uniform;
+
+layout(set = 1, binding = 0) uniform StageUniform {
     mat4 view;
     mat4 proj;
     vec3 light_dir;
     float ambient_light;
-} draw_uniform;
+} stage_uniform;
 
-layout(set = 1, binding = 0) uniform ObjectUniform {
+layout(set = 2, binding = 0) uniform ObjectUniform {
     mat4 model;
     mat4[SKELETON_SIZE] skeleton;
     uint selected;
@@ -46,7 +49,7 @@ bool eq_f(float x, float y) {
 void main() {
     color = vec4(1.0, 1.0, 1.0, 1.0);
     if (object_uniform.selected != 0) {
-        color = vec4(0.2, 0.5, 1.0, 1.0);
+        color = vec4(0.7, 0.8, 1.0, 1.0);
     }
 
     vec4 in_normal = normalize(in_normal);
@@ -104,8 +107,8 @@ void main() {
     // }
     // color = vec4(colors[0], colors[1], colors[2], 1.0);
 
-    gl_Position = position * object_uniform.model * draw_uniform.view * draw_uniform.proj;
-    float brightness = max(draw_uniform.ambient_light, dot(-draw_uniform.light_dir, normalize((in_normal * inverse(transpose(object_uniform.model))).xyz)));
+    gl_Position = position * object_uniform.model * stage_uniform.view * stage_uniform.proj;
+    float brightness = max(stage_uniform.ambient_light, dot(-stage_uniform.light_dir, normalize((in_normal * inverse(transpose(object_uniform.model))).xyz)));
     color = color * brightness;
 
 }
