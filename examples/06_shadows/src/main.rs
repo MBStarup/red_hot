@@ -9,7 +9,7 @@ use rand::{RngExt, SeedableRng};
 use ash::vk;
 use red_hot::{
     math::{perspective_matrix, Mat4x4, Quaternion, Transform, Vec3},
-    renderer::{Mesh, MeshIndex, Renderer},
+    renderer::{ImageSize, Mesh, MeshIndex, Renderer},
 };
 
 use winit::{
@@ -177,8 +177,7 @@ fn main() {
 
         let shadow_texture = renderer.create_image(
             //. Create an image to store the shadow map
-            4096,                                                                         //. With with 4096
-            4096,                                                                         //. With height 4096
+            ImageSize::Fixed(4096, 4096),
             vk::Format::D32_SFLOAT,                                                       //. That consists of depth? f32's
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED, //. Which will be used as a depth stencil, and then as a sampled texture
             vk::MemoryPropertyFlags::DEVICE_LOCAL,                                        //. Which will only be on the GPU
@@ -209,7 +208,7 @@ fn main() {
                 vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
                 vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
             ],
-            &[&shadow_texture],
+            vec![shadow_texture],
             &[vk::AttachmentDescription {
                 format: vk::Format::D32_SFLOAT,
                 samples: vk::SampleCountFlags::TYPE_1,
@@ -237,8 +236,7 @@ fn main() {
 
         let shadow_texture2 = renderer.create_image(
             //. Create an image to store the shadow map
-            4096,                                                                         //. With with 4096
-            4096,                                                                         //. With height 4096
+            ImageSize::Fixed(4096, 4096),
             vk::Format::D32_SFLOAT,                                                       //. That consists of depth? f32's
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED, //. Which will be used as a depth stencil, and then as a sampled texture
             vk::MemoryPropertyFlags::DEVICE_LOCAL,                                        //. Which will only be on the GPU
@@ -269,7 +267,7 @@ fn main() {
                 vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
                 vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
             ],
-            &[&shadow_texture2],
+            vec![shadow_texture2],
             &[vk::AttachmentDescription {
                 format: vk::Format::D32_SFLOAT,
                 samples: vk::SampleCountFlags::TYPE_1,
@@ -296,8 +294,7 @@ fn main() {
         );
 
         let depth_image = renderer.create_image(
-            window_width,
-            window_height,
+            ImageSize::SurfaceSize,
             vk::Format::D32_SFLOAT,
             vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
             vk::MemoryPropertyFlags::DEVICE_LOCAL,
@@ -337,7 +334,7 @@ fn main() {
                 vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
                 vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
             ],
-            &[&red_hot::renderer::RedHotStageImage::SwapchainImage(), &depth_image],
+            vec![red_hot::renderer::RedHotStageImage::SwapchainImage(), depth_image],
             &[
                 vk::AttachmentDescription {
                     format: renderer.swapchain_image_format,
@@ -357,7 +354,7 @@ fn main() {
                 },
             ],
             [
-                vk::ClearValue { color: vk::ClearColorValue { float32: renderer.clear_color } },
+                vk::ClearValue { color: vk::ClearColorValue { float32: [0.09, 0.05, 0.14, 1.0] } },
                 vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } },
             ],
             &[*vk::SubpassDescription::builder()
@@ -434,8 +431,6 @@ fn main() {
 
         let mut light_box = Object { transform: Transform::default(), mesh: meshes[0] };
         let mut light_box2 = Object { transform: Transform::default(), mesh: meshes[0] };
-
-        renderer.clear_color = [0.09, 0.05, 0.14, 1.0];
 
         let mut last_time;
         let mut current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
@@ -527,7 +522,7 @@ fn main() {
                     window_width = size.width;
                     window_height = size.height;
                     // BUG: On GLaDOS (Debian KDE Wayland) windows get moved instead of resized, and the size is incomprehensible?!?!
-                    // TODO: update swapchain and stuff in renderer
+                    renderer.resize_window(window_width, window_height);
                 },
                 Event::WindowEvent { event: WindowEvent::Focused(focus), .. } => {
                     focused = focus;
@@ -592,7 +587,7 @@ fn main() {
             if frametime_circ_buffer[N_FRAMETIME - 1] != 0.0 {
                 //. Wait untill buffer is filled
                 let avg_frametime = frametime_circ_buffer.iter().sum::<f32>() / N_FRAMETIME as f32;
-                println!("fps: {}", 1.0 / avg_frametime);
+                // println!("fps: {}", 1.0 / avg_frametime);
             }
 
             dt *= a; //. Modifyer

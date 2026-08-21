@@ -25,7 +25,7 @@ use std::{
     os::raw::c_char,
     todo,
 };
-use std::{matches, println};
+use std::{matches, println, unreachable};
 
 use winit::window::Window;
 
@@ -64,6 +64,14 @@ struct RenderStage {
     render_pass: RenderPass,                                               // TODO: Convert to buffer backed index system , to allow reuse
     framebuffers: Vec<RedHotFramebuffer>,
     clear_values: Box<[vk::ClearValue]>,
+    size: ImageSize,
+    images: Vec<RedHotStageImage>,
+}
+
+#[derive(Clone, Copy)]
+pub enum ImageSize {
+    SurfaceSize,
+    Fixed(u32, u32),
 }
 
 #[derive(Clone, Copy)]
@@ -73,18 +81,19 @@ pub struct RedHotFramebuffer {
     height: u32,
 }
 
+#[derive(Clone, Copy)]
 pub enum RedHotStageImage {
     Image(RedHotImageInfo),
     SwapchainImage(), // TODO[multi-surface-support]: This should take a surface, for which the associated swapchain should be used
 }
 
+#[derive(Clone, Copy)]
 pub struct RedHotImageInfo {
     // image: vk::Image,
     // memory_req: MemoryRequirements,
     // memory: DeviceMemory,
     view: vk::ImageView,
-    width: u32,
-    height: u32,
+    size: ImageSize,
     format: vk::Format,
 }
 
@@ -102,14 +111,15 @@ struct RedHotPipeline {
 }
 
 impl RenderStage {
-    // pub fn destroy_graphics_pipeline(&mut self, device: &Device) {
-    //     match self.graphics_pipeline {
-    //         None => return,
-    //         Some(pipeline) => unsafe {
-    //             device.destroy_pipeline(pipeline, None);
-    //         },
-    //     }
-    // }
+    pub fn destroy_pipeline(&mut self, device: &Device) {
+        match self.pipeline.graphics_pipeline {
+            None => return,
+            Some(pipeline) => unsafe {
+                device.destroy_pipeline(pipeline, None);
+                self.pipeline.graphics_pipeline = None;
+            },
+        }
+    }
 
     fn get_pipeline<Vertex>(&mut self, device: &Device, present_index: u32) -> Pipeline {
         match self.pipeline.graphics_pipeline {
@@ -123,7 +133,6 @@ impl RenderStage {
     }
 
     pub unsafe fn create_graphics_pipeline<Vertex>(&mut self, device: &Device, width: u32, height: u32) -> Pipeline {
-        // TODO: Recreate graphics pipeline on window resize
         // TODO: Check for (and remove) old graphics pipeline, in case this gets called "badly" (i.e. someone hasn't cleaned up the old first)
         println!("Creating graphics pipeline");
         let scissors = [*Rect2D::builder().extent(*vk::Extent2D::builder().width(width).height(height))];
@@ -196,13 +205,13 @@ where Vertex: Copy
     entry: Entry,
     window_width: u32,
     window_height: u32,
-    pub clear_color: [f32; 4],
     instance: Instance,
     surface: SurfaceKHR,
     pdevice: PhysicalDevice,
     device: Device,
 
     // TODO[multi-surface-support]: Combine these, then do a Surface -> Swapchain map
+    // TODO[QOL]: Wrap in Vec<ImageInfo>, or maybe it's own type to avoid repetition?
     swapchain: SwapchainKHR,
     swapchain_loader: Swapchain,
     swapchain_image_views: Vec<ImageView>,
@@ -261,6 +270,42 @@ unsafe extern "system" fn vulkan_debug_callback(
     println!("{:?}: {:?} [{} ({})] : {}", message_severity, message_type, message_id_name, &message_id_number.to_string(), message,);
 
     vk::FALSE
+}
+
+unsafe fn create_framebuffers(
+    device: &Device,
+    swapchain_image_views: &[ImageView],
+    render_pass: RenderPass,
+    n_framebuffers: usize,
+    images: &Vec<RedHotStageImage>,
+    width: u32,
+    height: u32,
+) -> Vec<RedHotFramebuffer> {
+    (0..n_framebuffers)
+        .map(|i| RedHotFramebuffer {
+            framebuffer: device
+                .create_framebuffer(
+                    &vk::FramebufferCreateInfo::builder()
+                        .render_pass(render_pass)
+                        .attachments(
+                            &images
+                                .iter()
+                                .map(|img| match img {
+                                    RedHotStageImage::Image(img_info) => img_info.view,
+                                    RedHotStageImage::SwapchainImage() => swapchain_image_views[i],
+                                })
+                                .collect::<Vec<_>>(),
+                        )
+                        .width(width)
+                        .height(height)
+                        .layers(1),
+                    None,
+                )
+                .unwrap(),
+            width,
+            height,
+        })
+        .collect()
 }
 
 unsafe fn swapchain_stuff(
@@ -337,7 +382,7 @@ unsafe fn swapchain_stuff(
     (swapchain_loader, swapchain, surface_format.format, image_views, images)
 }
 
-impl<Vertex> Renderer<Vertex>
+impl<'a, Vertex> Renderer<Vertex>
 where Vertex: Copy
 {
     pub fn new(window: &Window, window_width: u32, window_height: u32) -> Renderer<Vertex> {
@@ -483,7 +528,7 @@ where Vertex: Copy
                 .expect("queue submit failed.");
             device.wait_for_fences(&[command_buffer_reuse_fence], true, std::u64::MAX).expect("Wait for fence failed."); //. Wait for the setup commands to finish
 
-            //# Swapchian images
+            //# Swapchain images
             let (swapchain_loader, swapchain, swapchain_image_format, swapchain_image_views, swapchain_images) =
                 swapchain_stuff(&device, &instance, &entry, pdevice, surface, window_width, window_height);
 
@@ -523,7 +568,6 @@ where Vertex: Copy
                 entry,
                 window_width,
                 window_height,
-                clear_color: [1.0, 1.0, 1.0, 1.0],
                 instance,
                 surface,
                 pdevice,
@@ -586,7 +630,12 @@ where Vertex: Copy
     //     )
     // }
 
-    pub unsafe fn create_image(&self, width: u32, height: u32, format: vk::Format, usage: vk::ImageUsageFlags, memory_flags: vk::MemoryPropertyFlags) -> RedHotStageImage {
+    pub unsafe fn create_image(&self, size: ImageSize, format: vk::Format, usage: vk::ImageUsageFlags, memory_flags: vk::MemoryPropertyFlags) -> RedHotStageImage {
+        let (width, height) = match size {
+            ImageSize::SurfaceSize => (self.window_width, self.window_height),
+            ImageSize::Fixed(width, height) => (width, height),
+        };
+
         let image = self
             .device
             .create_image(
@@ -635,7 +684,7 @@ where Vertex: Copy
             )
             .unwrap();
 
-        RedHotStageImage::Image(RedHotImageInfo { view: image_view, width, height, format })
+        RedHotStageImage::Image(RedHotImageInfo { view: image_view, size, format })
     }
 
     pub unsafe fn register_stage<const N_VERTEX_ATTRIBUTE_DESCRIPTIONS: usize, const N_CLEAR_VALUES: usize>(
@@ -647,7 +696,7 @@ where Vertex: Copy
         depth_stencil_state: PipelineDepthStencilStateCreateInfo,
         color_blend_state: PipelineColorBlendStateCreateInfo,
         vertex_attribute_descriptions: [VertexInputAttributeDescription; N_VERTEX_ATTRIBUTE_DESCRIPTIONS],
-        images: &[&RedHotStageImage],
+        images: Vec<RedHotStageImage>,
         attachments: &[AttachmentDescription],
         clear_values: [ClearValue; N_CLEAR_VALUES],
         subpass_description: &[SubpassDescription],
@@ -665,39 +714,21 @@ where Vertex: Copy
         println!("Registering stage: {name}");
 
         let is_presentable_stage = images.iter().any(|x| matches!(x, RedHotStageImage::SwapchainImage()));
-        let n_framebuffers = if is_presentable_stage { self.swapchain_images.len() } else { 1 };
+        let n_framebuffers = if is_presentable_stage { self.swapchain_images.len() } else { 1 }; //. For now we assume a single framebuffer unless we're targeting the swapchain
 
-        let framebuffers: Vec<_> = (0..n_framebuffers)
-            .map(|i| {
-                let mut width = u32::MAX;
-                let mut height = u32::MAX;
-                let mut views = vec![];
+        let (width, height) = if is_presentable_stage {
+            (self.window_width, self.window_height)
+        } else {
+            match images.first().expect("Render stage with no target images") {
+                RedHotStageImage::Image(img_info) => match img_info.size {
+                    ImageSize::SurfaceSize => (self.window_width, self.window_height),
+                    ImageSize::Fixed(width, height) => (width, height),
+                },
+                RedHotStageImage::SwapchainImage() => unreachable!(), // NOTE[unreachable]: As we only reach this case if !is_presentable_stage, which is derived from any images being SwapchainImages
+            }
+        };
 
-                for img in images.iter() {
-                    let img_info = match img {
-                        RedHotStageImage::Image(img_info) => img_info,
-                        RedHotStageImage::SwapchainImage() => {
-                            &RedHotImageInfo { view: self.swapchain_image_views[i], width: self.window_width, height: self.window_height, format: self.swapchain_image_format }
-                        }, // TODO[multi-surface-support]: This should depend on surface
-                    };
-                    width = u32::min(width, img_info.width);
-                    height = u32::min(height, img_info.height);
-                    views.push(img_info.view);
-                }
-
-                RedHotFramebuffer {
-                    framebuffer: self
-                        .device
-                        .create_framebuffer(
-                            &vk::FramebufferCreateInfo::builder().render_pass(render_pass).attachments(&views).width(width).height(height).layers(1),
-                            None,
-                        )
-                        .unwrap(),
-                    width,
-                    height,
-                }
-            })
-            .collect();
+        let framebuffers = create_framebuffers(&self.device, &self.swapchain_image_views, render_pass, n_framebuffers, &images, width, height);
 
         let object_descriptor_set_layout = self
             .device
@@ -829,21 +860,95 @@ where Vertex: Copy
                 render_pass: render_pass,
                 framebuffers: framebuffers,
                 clear_values: Box::new(clear_values),
+                images,
+                size: if is_presentable_stage { ImageSize::SurfaceSize } else { ImageSize::Fixed(width, height) },
             }
         });
         StageIndex(self.stages.len() - 1)
     }
 
     pub fn resize_window(&mut self, window_width: u32, window_height: u32) {
-        // self.window_width = window_width;
-        // self.window_height = window_height;
+        println!("resize_window: {window_width}, {window_height}");
 
-        // // TODO: Probably need to also re-create other stuff, like swapchain
-        // //# Re-create graphics pipeline
-        // for stage in &mut self.stages {
-        //     stage.destroy_graphics_pipeline(&self.device);
-        //     unsafe { stage.create_graphics_pipeline::<Vertex>(&self.device, self.window_width, self.window_height) };
-        // }
+        self.window_width = window_width;
+        self.window_height = window_height;
+
+        // TODO: might need to re-create other stuff?
+
+        // TODO: Probably need to delete old swapchain stuff
+        println!("deleting old swapchain");
+        unsafe {
+            let swapchain = self.swapchain;
+            self.device.device_wait_idle().unwrap();
+
+            for stage in &self.stages {
+                match stage.size {
+                    ImageSize::SurfaceSize => {
+                        println!("re-creating framebuffers for stage {}", stage.name);
+                        for framebuffer in &stage.framebuffers {
+                            self.device.destroy_framebuffer(framebuffer.framebuffer, None);
+                        }
+                    },
+                    ImageSize::Fixed(_, _) => {},
+                }
+            }
+
+            for image_view in self.swapchain_image_views.drain(..) {
+                self.device.destroy_image_view(image_view, None);
+            }
+            self.swapchain_loader.destroy_swapchain(swapchain, None);
+        }
+
+        println!("creating new swapchain");
+        let (swapchain_loader, swapchain, swapchain_image_format, swapchain_image_views, swapchain_images) =
+            unsafe { swapchain_stuff(&self.device, &self.instance, &self.entry, self.pdevice, self.surface, window_width, window_height) };
+        println!("new swapchain created");
+        self.swapchain_loader = swapchain_loader;
+        self.swapchain = swapchain;
+        self.swapchain_image_format = swapchain_image_format;
+        self.swapchain_image_views = swapchain_image_views;
+        self.swapchain_images = swapchain_images;
+
+        for stage in &mut self.stages {
+            match stage.size {
+                ImageSize::SurfaceSize => {
+                    println!("re-creating framebuffers for stage {}", stage.name);
+                    stage.framebuffers = unsafe {
+                        create_framebuffers(
+                            &self.device,
+                            &self.swapchain_image_views,
+                            stage.render_pass,
+                            self.swapchain_images.len(),
+                            &stage.images,
+                            window_width,
+                            window_height,
+                        )
+                    }
+                },
+                ImageSize::Fixed(_, _) => {},
+            }
+        }
+
+        //# Re-create graphics pipelines
+        for stage in &mut self.stages {
+            match stage.size {
+                ImageSize::SurfaceSize => {
+                    println!("re-creating pipeline for stage {}", stage.name);
+
+                    match stage.pipeline.graphics_pipeline {
+                        None => return,
+                        Some(pipeline) => unsafe {
+                            self.device.destroy_pipeline(pipeline, None);
+                        },
+                    }
+                    println!("    pipeline destroyed");
+
+                    stage.pipeline.graphics_pipeline = Some(unsafe { stage.create_graphics_pipeline::<Vertex>(&self.device, self.window_width, self.window_height) });
+                    println!("    pipeline re-created");
+                },
+                ImageSize::Fixed(_, _) => {},
+            }
+        }
     }
 
     pub fn register_mesh(&mut self, mesh: Mesh<Vertex>) -> MeshIndex {
@@ -971,8 +1076,6 @@ where Vertex: Copy
 
     pub fn render_begin<DU>(&mut self, draw_uniform: DU)
     where DU: Copy {
-        // println!("Starting frame");
-
         unsafe {
             assert!(self.current_render.is_none(), "Call render_commit before begin_render");
             let (present_index, swapchain_suboptimal) = self.swapchain_loader.acquire_next_image(self.swapchain, std::u64::MAX, self.present_complete_semaphore, vk::Fence::null()).unwrap();
@@ -1069,7 +1172,6 @@ where Vertex: Copy
         OU: Copy,
     {
         let stage = &mut self.stages[stagei.0];
-        // println!("Render stage: {}", stage.name);
         let current_render = self.current_render.as_mut().expect("Call render_begin before calling render_stage");
         let stage_framebuffer = stage.get_framebuffer(current_render.present_index);
         let scissors = [*Rect2D::builder().extent(*vk::Extent2D::builder().width(stage_framebuffer.width).height(stage_framebuffer.height))];
@@ -1229,7 +1331,6 @@ where Vertex: Copy
     }
 
     pub fn render_commit(&mut self) {
-        // println!("Committing frame");
         unsafe {
             let current_render = self.current_render.as_ref().expect("Call render_begin before calling render_end");
             self.device.end_command_buffer(self.command_buffer).expect("End commandbuffer");
@@ -1278,21 +1379,20 @@ where Vertex: Copy
     }
 
     #[rustfmt::skip]
-    pub fn destroy(&self) {
-        todo!("Clean up");
-        // unsafe {
-        //     self.device.device_wait_idle().unwrap();
-        //     for framebuffer in &self.framebuffers {
-        //         self.device.destroy_framebuffer(*framebuffer, None);
-        //     }
-        //     for stage in &self.stages {
-        //         self.device.destroy_shader_module(stage.vertex_shader_module, None);
-        //         self.device.destroy_shader_module(stage.fragment_shader_module, None);
-        //     }
-        //     if let Some(buffer_memory) = self.vertex_buffer_memory {self.device.free_memory(buffer_memory, None);}
-        //     if let Some(buffer) = self.vertex_buffer {self.device.destroy_buffer(buffer, None);}
-        //     if let Some(buffer_memory) = self.index_buffer_memory {self.device.free_memory(buffer_memory, None);}
-        //     if let Some(buffer) = self.index_buffer {self.device.destroy_buffer(buffer, None);}
-        // }
+    pub fn destroy(&self) { // TODO: Figure out missing cleanup
+        unsafe {
+            self.device.device_wait_idle().unwrap();
+            for stage in &self.stages {
+                for framebuffer in &stage.framebuffers {
+                    self.device.destroy_framebuffer(framebuffer.framebuffer, None);
+                }
+                self.device.destroy_shader_module(stage.pipeline.create_info.vertex_shader_module, None);
+                self.device.destroy_shader_module(stage.pipeline.create_info.fragment_shader_module, None);
+            }
+            if let Some(buffer_memory) = self.vertex_buffer_memory {self.device.free_memory(buffer_memory, None);}
+            if let Some(buffer) = self.vertex_buffer {self.device.destroy_buffer(buffer, None);}
+            if let Some(buffer_memory) = self.index_buffer_memory {self.device.free_memory(buffer_memory, None);}
+            if let Some(buffer) = self.index_buffer {self.device.destroy_buffer(buffer, None);}
+        }
     }
 }
