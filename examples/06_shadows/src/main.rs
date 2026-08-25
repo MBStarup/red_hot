@@ -9,7 +9,7 @@ use rand::{RngExt, SeedableRng};
 use ash::vk;
 use red_hot::{
     math::{perspective_matrix, Mat4x4, Quaternion, Transform, Vec3},
-    renderer::{ImageSize, Mesh, MeshIndex, Renderer},
+    renderer::{ImageSize, Mesh, MeshIndex, RedHotImageCreateInfo, Renderer},
 };
 
 use winit::{
@@ -22,8 +22,8 @@ use winit::{
 fn main() {
     unsafe {
         println!("Example 06: shadows");
-        let mut window_width: u32 = 2000;
-        let mut window_height: u32 = 1200;
+        let mut window_width: u32 = 500;
+        let mut window_height: u32 = 500;
 
         #[derive(Clone, Debug, Copy)]
         #[repr(C)]
@@ -66,6 +66,14 @@ fn main() {
         struct ObjectUniform {
             model_mat: Mat4x4<f32>,
             is_light: u32,
+        }
+
+        #[allow(dead_code)]
+        #[derive(Clone, Debug, Copy)]
+        #[repr(C)]
+        struct UiObjectUniform {
+            model_mat: Mat4x4<f32>,
+            color: Vec3<f32>,
         }
 
         #[rustfmt::skip]
@@ -141,12 +149,12 @@ fn main() {
         #[rustfmt::skip]
         let plane_mesh = {
             let vertices = vec![
-                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 1.0, 1.0, 1.0] },
-                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] }, //. UP (LEFT/FRONT)
-                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
-                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0] },
-                Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0] }, //. UP (RIGHT/BACK)
-                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 0.0, 1.0] },
+                Vertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 1.0,1.0] },
+                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 0.0,1.0] }, //. UP (LEFT/FRONT)
+                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 1.0, 1.0,1.0] },
+                Vertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 1.0, 0.0,1.0] },
+                Vertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 1.0, 0.0,1.0] }, //. UP (RIGHT/BACK)
+                Vertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 1.0, 1.0,1.0] },
             ];
             let indices = (0..vertices.len() as u32).collect();
             Mesh::<Vertex> {vertices, indices}
@@ -175,13 +183,14 @@ fn main() {
 
         let mut renderer = Renderer::<Vertex>::new(&window, window_width, window_height);
 
-        let shadow_texture = renderer.create_image(
+        let shadow_texture = renderer.register_image(RedHotImageCreateInfo {
             //. Create an image to store the shadow map
-            ImageSize::Fixed(4096, 4096),
-            vk::Format::D32_SFLOAT,                                                       //. That consists of depth? f32's
-            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED, //. Which will be used as a depth stencil, and then as a sampled texture
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,                                        //. Which will only be on the GPU
-        );
+            size: ImageSize::Fixed(4096, 4096),
+            format: vk::Format::D32_SFLOAT,                                                      //. That consists of depth? f32's
+            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED, //. Which will be used as a depth stencil, and then as a sampled texture
+            memory_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,                                 //. Which will only be on the GPU
+            image_aspect_mask: vk::ImageAspectFlags::DEPTH,
+        });
         let shadow_stage = renderer.register_stage(
             "Shadow".to_owned(),
             include_bytes!("./shader/shadow_vert.spv"),
@@ -208,7 +217,7 @@ fn main() {
                 vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
                 vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
             ],
-            vec![shadow_texture],
+            vec![red_hot::renderer::RedHotStageImage::Image(shadow_texture)],
             &[vk::AttachmentDescription {
                 format: vk::Format::D32_SFLOAT,
                 samples: vk::SampleCountFlags::TYPE_1,
@@ -234,13 +243,14 @@ fn main() {
             &[],
         );
 
-        let shadow_texture2 = renderer.create_image(
+        let shadow_texture2 = renderer.register_image(RedHotImageCreateInfo {
             //. Create an image to store the shadow map
-            ImageSize::Fixed(4096, 4096),
-            vk::Format::D32_SFLOAT,                                                       //. That consists of depth? f32's
-            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED, //. Which will be used as a depth stencil, and then as a sampled texture
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,                                        //. Which will only be on the GPU
-        );
+            size: ImageSize::Fixed(4096, 4096),
+            format: vk::Format::D32_SFLOAT,                                                      //. That consists of depth? f32's
+            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT | vk::ImageUsageFlags::SAMPLED, //. Which will be used as a depth stencil, and then as a sampled texture
+            memory_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,                                 //. Which will only be on the GPU
+            image_aspect_mask: vk::ImageAspectFlags::DEPTH,
+        });
         let shadow_stage2 = renderer.register_stage(
             "Shadow".to_owned(),
             include_bytes!("./shader/shadow_vert.spv"),
@@ -267,7 +277,7 @@ fn main() {
                 vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
                 vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
             ],
-            vec![shadow_texture2],
+            vec![red_hot::renderer::RedHotStageImage::Image(shadow_texture2)],
             &[vk::AttachmentDescription {
                 format: vk::Format::D32_SFLOAT,
                 samples: vk::SampleCountFlags::TYPE_1,
@@ -293,12 +303,13 @@ fn main() {
             &[],
         );
 
-        let depth_image = renderer.create_image(
-            ImageSize::SurfaceSize,
-            vk::Format::D32_SFLOAT,
-            vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
-            vk::MemoryPropertyFlags::DEVICE_LOCAL,
-        );
+        let depth_image = renderer.register_image(RedHotImageCreateInfo {
+            size: ImageSize::SurfaceSize,
+            format: vk::Format::D32_SFLOAT,
+            usage: vk::ImageUsageFlags::DEPTH_STENCIL_ATTACHMENT,
+            memory_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            image_aspect_mask: vk::ImageAspectFlags::DEPTH,
+        });
         let default_stage = renderer.register_stage(
             "Default".to_owned(),
             include_bytes!("./shader/vert.spv"),
@@ -334,7 +345,7 @@ fn main() {
                 vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
                 vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
             ],
-            vec![red_hot::renderer::RedHotStageImage::SwapchainImage(), depth_image],
+            vec![red_hot::renderer::RedHotStageImage::SwapchainImage(), red_hot::renderer::RedHotStageImage::Image(depth_image)],
             &[
                 vk::AttachmentDescription {
                     format: renderer.swapchain_image_format,
@@ -370,7 +381,7 @@ fn main() {
             }],
             &[
                 (
-                    &shadow_texture,
+                    &red_hot::renderer::RedHotStageImage::Image(shadow_texture),
                     *vk::SamplerCreateInfo::builder()
                         .compare_enable(true)
                         .compare_op(vk::CompareOp::LESS_OR_EQUAL)
@@ -379,7 +390,7 @@ fn main() {
                         .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE),
                 ),
                 (
-                    &shadow_texture2,
+                    &red_hot::renderer::RedHotStageImage::Image(shadow_texture2),
                     *vk::SamplerCreateInfo::builder()
                         .compare_enable(true)
                         .compare_op(vk::CompareOp::LESS_OR_EQUAL)
@@ -389,8 +400,8 @@ fn main() {
                 ),
             ],
         );
-        let ui_stage = renderer.register_stage(
-            "UI".to_owned(),
+        let debug_stage = renderer.register_stage(
+            "Debug_Meshes".to_owned(),
             include_bytes!("./shader/vert.spv"),
             include_bytes!("./shader/green_frag.spv"),
             vk::PipelineRasterizationStateCreateInfo { cull_mode: vk::CullModeFlags::NONE, line_width: 1.0, polygon_mode: vk::PolygonMode::LINE, ..Default::default() },
@@ -418,14 +429,14 @@ fn main() {
                 vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
                 vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
             ],
-            vec![red_hot::renderer::RedHotStageImage::SwapchainImage(), depth_image],
+            vec![red_hot::renderer::RedHotStageImage::SwapchainImage(), red_hot::renderer::RedHotStageImage::Image(depth_image)],
             &[
                 vk::AttachmentDescription {
                     format: renderer.swapchain_image_format,
                     samples: vk::SampleCountFlags::TYPE_1,
                     load_op: vk::AttachmentLoadOp::LOAD,
                     store_op: vk::AttachmentStoreOp::STORE,
-                    final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                    final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                     ..Default::default()
                 },
                 vk::AttachmentDescription {
@@ -455,11 +466,150 @@ fn main() {
             &[],
         );
 
-        let meshes = vec![
-            renderer.register_mesh(cube_mesh),
-            renderer.register_mesh(pyramid_mesh),
-            // renderer.register_mesh(plane_mesh),
+        const TEXTURE_ATLAS_WIDTH: u32 = 2000;
+        const TEXTURE_ATLAS_HEIGHT: u32 = 2000;
+        let texture_atlas = renderer.register_image(RedHotImageCreateInfo {
+            size: ImageSize::Fixed(TEXTURE_ATLAS_WIDTH, TEXTURE_ATLAS_HEIGHT),
+            format: vk::Format::R8G8B8A8_UNORM,
+            usage: vk::ImageUsageFlags::SAMPLED,
+            memory_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+            image_aspect_mask: vk::ImageAspectFlags::COLOR,
+        });
+
+        const BARS: [[u8; 4]; 7] = [
+            [0xC0, 0xC0, 0xC0, 0xFF], // grey
+            [0xC0, 0xC0, 0x00, 0xFF], // yellow
+            [0x00, 0xC0, 0xC0, 0xFF], // cyan
+            [0x00, 0xC0, 0x00, 0xFF], // green
+            [0xC0, 0x00, 0xC0, 0xFF], // magenta
+            [0xC0, 0x00, 0x00, 0xFF], // red
+            [0x00, 0x00, 0xC0, 0xFF], // blue
         ];
+
+        const MARKER_SIZE: u32 = 150;
+        const BORDER: u32 = 12;
+        const CROSS: u32 = 8;
+        const ALPHA_CHECKER: u32 = 40; // underlying checker cell size, so ramp shows through
+
+        let test_card: Vec<u8> = (0..TEXTURE_ATLAS_WIDTH * TEXTURE_ATLAS_HEIGHT)
+            .flat_map(|i| {
+                let x = i % TEXTURE_ATLAS_WIDTH;
+                let y = i / TEXTURE_ATLAS_WIDTH;
+
+                let in_top_left = x < MARKER_SIZE && y < MARKER_SIZE;
+                let in_top_right = x >= TEXTURE_ATLAS_WIDTH - MARKER_SIZE && y < MARKER_SIZE;
+                let in_bottom_left = x < MARKER_SIZE && y >= TEXTURE_ATLAS_HEIGHT - MARKER_SIZE;
+                let in_bottom_right = x >= TEXTURE_ATLAS_WIDTH - MARKER_SIZE && y >= TEXTURE_ATLAS_HEIGHT - MARKER_SIZE;
+
+                let cx = TEXTURE_ATLAS_WIDTH / 2;
+                let cy = TEXTURE_ATLAS_HEIGHT / 2;
+                let on_crosshair = (x.abs_diff(cx) < CROSS) || (y.abs_diff(cy) < CROSS);
+
+                let on_border = x < BORDER || y < BORDER || x >= TEXTURE_ATLAS_WIDTH - BORDER || y >= TEXTURE_ATLAS_HEIGHT - BORDER;
+
+                // middle band (roughly y in [2/3, 5/6)) reserved for an alpha ramp over a checker backdrop
+                let in_alpha_band = y >= TEXTURE_ATLAS_HEIGHT * 2 / 3 && y < TEXTURE_ATLAS_HEIGHT * 5 / 6;
+
+                if in_top_left {
+                    [0xFF, 0x00, 0x00, 0xFF]
+                } else if in_top_right {
+                    [0x00, 0xFF, 0x00, 0xFF]
+                } else if in_bottom_left {
+                    [0x00, 0x00, 0xFF, 0xFF]
+                } else if in_bottom_right {
+                    [0xFF, 0xFF, 0x00, 0xFF]
+                } else if on_crosshair {
+                    [0xFF, 0xFF, 0xFF, 0xFF]
+                } else if on_border {
+                    [0x00, 0x00, 0x00, 0xFF]
+                } else if y < TEXTURE_ATLAS_HEIGHT * 2 / 3 {
+                    let bar = (x * 7 / TEXTURE_ATLAS_WIDTH) as usize;
+                    BARS[bar]
+                }
+                // alpha test band: checkerboard backdrop colored orange, with alpha ramping 0->255 left to right
+                else if in_alpha_band {
+                    let checker_on = ((x / ALPHA_CHECKER) + (y / ALPHA_CHECKER)) % 2 == 0;
+                    let base = if checker_on { [0xFF, 0x80, 0x00] } else { [0x40, 0x40, 0x40] }; // orange / grey checker
+                    let alpha = (x * 255 / TEXTURE_ATLAS_WIDTH) as u8; // ramps 0 (fully transparent) -> 255 (fully opaque), left to right
+                    [base[0], base[1], base[2], alpha]
+                }
+                // bottom-left: black-to-white gradient
+                else if x < TEXTURE_ATLAS_WIDTH * 3 / 4 {
+                    let v = (x * 255 / (TEXTURE_ATLAS_WIDTH * 3 / 4)) as u8;
+                    [v, v, v, 0xFF]
+                }
+                // bottom-right: pure primary/white swatches
+                else {
+                    let swatches: [[u8; 4]; 4] = [[0xFF, 0xFF, 0xFF, 0xFF], [0xFF, 0x00, 0x00, 0xFF], [0x00, 0xFF, 0x00, 0xFF], [0x00, 0x00, 0xFF, 0xFF]];
+                    let local_x = x - TEXTURE_ATLAS_WIDTH * 3 / 4;
+                    let swatch = (local_x * 4 / (TEXTURE_ATLAS_WIDTH / 4)).min(3) as usize;
+                    swatches[swatch]
+                }
+            })
+            .collect();
+
+        renderer.write_to_image(red_hot::renderer::RedHotStageImage::Image(texture_atlas), &test_card);
+
+        let ui_stage = renderer.register_stage(
+            "UI".to_owned(),
+            include_bytes!("./shader/ui_vert.spv"),
+            include_bytes!("./shader/ui_frag.spv"),
+            vk::PipelineRasterizationStateCreateInfo { cull_mode: vk::CullModeFlags::NONE, line_width: 1.0, polygon_mode: vk::PolygonMode::FILL, ..Default::default() },
+            vk::PipelineDepthStencilStateCreateInfo {
+                depth_test_enable: 0,
+                depth_write_enable: 0,
+                front: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+                back: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+                max_depth_bounds: 1.0,
+                ..Default::default()
+            },
+            *vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
+                blend_enable: 1,
+                src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
+                dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+                color_blend_op: vk::BlendOp::ADD,
+                src_alpha_blend_factor: vk::BlendFactor::ONE,
+                dst_alpha_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+                alpha_blend_op: vk::BlendOp::ADD,
+                color_write_mask: vk::ColorComponentFlags::RGBA,
+            }]),
+            [
+                vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
+                vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
+                vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 }, //. Color
+            ],
+            vec![red_hot::renderer::RedHotStageImage::SwapchainImage()],
+            &[vk::AttachmentDescription {
+                format: renderer.swapchain_image_format,
+                samples: vk::SampleCountFlags::TYPE_1,
+                load_op: vk::AttachmentLoadOp::LOAD,
+                store_op: vk::AttachmentStoreOp::STORE,
+                final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                ..Default::default()
+            }],
+            [vk::ClearValue { color: vk::ClearColorValue { float32: [1.0, 0.0, 0.0, 0.0] } }],
+            &[*vk::SubpassDescription::builder()
+                .color_attachments(&[vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL }])
+                .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)],
+            &[vk::SubpassDependency {
+                src_subpass: vk::SUBPASS_EXTERNAL,
+                src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+                dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+                ..Default::default()
+            }],
+            &[(
+                &red_hot::renderer::RedHotStageImage::Image(texture_atlas),
+                *vk::SamplerCreateInfo::builder()
+                    .compare_enable(false)
+                    .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                    .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                    .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE),
+            )],
+        );
+
+        let meshes = vec![renderer.register_mesh(cube_mesh), renderer.register_mesh(pyramid_mesh)];
+        let plane_meshi = renderer.register_mesh(plane_mesh);
         let inverse_cube_meshi = renderer.register_mesh(inverse_cube_mesh);
         let room_box = Object { transform: Transform { scale: [100.0, 100.0, 100.0].into(), ..Transform::default() }, mesh: inverse_cube_meshi };
 
@@ -584,10 +734,12 @@ fn main() {
                     }
                 },
                 Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
-                    window_width = size.width;
-                    window_height = size.height;
-                    // BUG: On GLaDOS (Debian KDE Wayland) windows get moved instead of resized, and the size is incomprehensible?!?!
-                    renderer.resize_window(window_width, window_height);
+                    if window_width != size.width || window_height != size.height {
+                        window_width = size.width;
+                        window_height = size.height;
+                        // BUG: On GLaDOS (Debian KDE Wayland) windows get moved instead of resized, and the size is incomprehensible?!?!
+                        renderer.resize_window(window_width, window_height);
+                    }
                 },
                 Event::WindowEvent { event: WindowEvent::Focused(focus), .. } => {
                     focused = focus;
@@ -638,7 +790,7 @@ fn main() {
                             .collect(),
                     );
                     renderer.render_stage(
-                        ui_stage,
+                        debug_stage,
                         RenderStageUniform {
                             view_mat: camera_transform.get_inverse_matrix(),
                             proj_mat,
@@ -665,6 +817,22 @@ fn main() {
                                 ObjectUniform { model_mat: light_box2.transform.get_matrix(), is_light: 1 },
                             ])
                             .collect(),
+                    );
+                    renderer.render_stage(
+                        ui_stage,
+                        DrawUniform{ _dummy: 0.0 }, //. Dummy stage uniform
+                        vec![
+                            plane_meshi,
+                            plane_meshi,
+                            plane_meshi,
+                            plane_meshi,
+                        ],
+                        vec![
+                            UiObjectUniform { model_mat: Transform { position: Vec3 { x:  1.0 * (1.0 - (0.0001 * window_height as f32)), y:  1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 }, rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU/4.0), scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 } }.get_matrix(), color: Vec3 { x: 1.0, y: 1.0, z: 1.0 } },
+                            UiObjectUniform { model_mat: Transform { position: Vec3 { x:  1.0 * (1.0 - (0.0001 * window_height as f32)), y: -1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 }, rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU/4.0), scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 } }.get_matrix(), color: Vec3 { x: 1.0, y: 0.0, z: 1.0 } },
+                            UiObjectUniform { model_mat: Transform { position: Vec3 { x: -1.0 * (1.0 - (0.0001 * window_height as f32)), y:  1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 }, rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU/4.0), scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 } }.get_matrix(), color: Vec3 { x: 0.0, y: 1.0, z: 1.0 } },
+                            UiObjectUniform { model_mat: Transform { position: Vec3 { x: -1.0 * (1.0 - (0.0001 * window_height as f32)), y: -1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 }, rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU/4.0), scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 } }.get_matrix(), color: Vec3 { x: 0.0, y: 0.0, z: 1.0 } },
+                        ],
                     );
                     renderer.render_commit();
                 },

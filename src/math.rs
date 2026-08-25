@@ -462,6 +462,11 @@ where T: num::Num + Real
     pub fn default() -> Transform<T> {
         Transform { position: Vec3::zero(), rotation: Quaternion::identity(), scale: Vec3::one() }
     }
+
+    pub fn translated(mut self, offset: Vec3<T>) -> Transform<T> {
+        self.position += offset;
+        self
+    }
 }
 
 #[rustfmt::skip]

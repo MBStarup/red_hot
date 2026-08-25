@@ -31,8 +31,12 @@ use winit::window::Window;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MeshIndex(usize);
+
 #[derive(Debug, Clone, Copy)]
 pub struct StageIndex(usize);
+
+#[derive(Debug, Clone, Copy)]
+pub struct ImageIndex(usize);
 
 impl std::fmt::Display for MeshIndex {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -41,6 +45,12 @@ impl std::fmt::Display for MeshIndex {
 }
 
 impl Into<usize> for MeshIndex {
+    fn into(self) -> usize {
+        self.0
+    }
+}
+
+impl Into<usize> for ImageIndex {
     fn into(self) -> usize {
         self.0
     }
@@ -83,18 +93,25 @@ pub struct RedHotFramebuffer {
 
 #[derive(Clone, Copy)]
 pub enum RedHotStageImage {
-    Image(RedHotImageInfo),
+    Image(ImageIndex),
     SwapchainImage(), // TODO[multi-surface-support]: This should take a surface, for which the associated swapchain should be used
 }
 
 #[derive(Clone, Copy)]
+pub struct RedHotImageCreateInfo {
+    pub size: ImageSize,
+    pub format: vk::Format,
+    pub usage: vk::ImageUsageFlags,
+    pub memory_flags: vk::MemoryPropertyFlags,
+    pub image_aspect_mask: vk::ImageAspectFlags,
+}
+
+#[derive(Clone, Copy)]
 pub struct RedHotImageInfo {
-    // image: vk::Image,
-    // memory_req: MemoryRequirements,
-    // memory: DeviceMemory,
+    image: vk::Image,
+    memory: DeviceMemory,
     view: vk::ImageView,
-    size: ImageSize,
-    format: vk::Format,
+    create_info: RedHotImageCreateInfo,
 }
 
 pub struct RedHotPipelineCreateInfo {
@@ -134,7 +151,7 @@ impl RenderStage {
 
     pub unsafe fn create_graphics_pipeline<Vertex>(&mut self, device: &Device, width: u32, height: u32) -> Pipeline {
         // TODO: Check for (and remove) old graphics pipeline, in case this gets called "badly" (i.e. someone hasn't cleaned up the old first)
-        println!("Creating graphics pipeline");
+        println!("Creating graphics pipeline ({width}, {height})");
         let scissors = [*Rect2D::builder().extent(*vk::Extent2D::builder().width(width).height(height))];
         let viewports = [vk::Viewport { x: 0.0, y: 0.0, width: width as f32, height: height as f32, min_depth: 0.0, max_depth: 1.0 }];
         *(device)
@@ -243,6 +260,7 @@ where Vertex: Copy
     should_regenerate_vertex_buffer: bool,
 
     registered_meshes: Vec<(Mesh<Vertex>, u32, i32)>,
+    registered_images: Vec<RedHotImageInfo>, // Note: Non-swapchain images
     current_render: Option<CurrentRenderInfo>,
 }
 
@@ -278,6 +296,7 @@ unsafe fn create_framebuffers(
     render_pass: RenderPass,
     n_framebuffers: usize,
     images: &Vec<RedHotStageImage>,
+    registered_images: &Vec<RedHotImageInfo>,
     width: u32,
     height: u32,
 ) -> Vec<RedHotFramebuffer> {
@@ -291,7 +310,7 @@ unsafe fn create_framebuffers(
                             &images
                                 .iter()
                                 .map(|img| match img {
-                                    RedHotStageImage::Image(img_info) => img_info.view,
+                                    RedHotStageImage::Image(imagei) => registered_images[Into::<usize>::into(*imagei)].view,
                                     RedHotStageImage::SwapchainImage() => swapchain_image_views[i],
                                 })
                                 .collect::<Vec<_>>(),
@@ -603,6 +622,7 @@ where Vertex: Copy
                 vertex_buffer: None,
                 should_regenerate_vertex_buffer: true,
 
+                registered_images: vec![],
                 current_render: None,
             }
         }
@@ -630,8 +650,173 @@ where Vertex: Copy
     //     )
     // }
 
-    pub unsafe fn create_image(&self, size: ImageSize, format: vk::Format, usage: vk::ImageUsageFlags, memory_flags: vk::MemoryPropertyFlags) -> RedHotStageImage {
-        let (width, height) = match size {
+    pub unsafe fn write_to_image(&self, image: RedHotStageImage, data: &[u8]) {
+        let size = data.len() as vk::DeviceSize;
+
+        match image {
+            RedHotStageImage::Image(imagei) => {
+                let img_info = self.get_image(imagei);
+                let staging_buffer = self
+                    .device
+                    .create_buffer(
+                        &vk::BufferCreateInfo::builder().size(size).usage(vk::BufferUsageFlags::TRANSFER_SRC).sharing_mode(vk::SharingMode::EXCLUSIVE),
+                        None,
+                    )
+                    .expect("Create staging buffer failed.");
+                let mem_reqs = self.device.get_buffer_memory_requirements(staging_buffer);
+                let mem_props = self.instance.get_physical_device_memory_properties(self.pdevice);
+
+                let staging_memory = self
+                    .device
+                    .allocate_memory(
+                        &vk::MemoryAllocateInfo::builder().allocation_size(mem_reqs.size).memory_type_index(
+                            (0..mem_props.memory_type_count)
+                                .find(|&i| {
+                                    (mem_reqs.memory_type_bits & (1 << i)) != 0
+                                        && mem_props.memory_types[i as usize].property_flags.contains(vk::MemoryPropertyFlags::HOST_VISIBLE | vk::MemoryPropertyFlags::HOST_COHERENT)
+                                })
+                                .expect("No suitable memory type for staging buffer."),
+                        ),
+                        None,
+                    )
+                    .expect("Allocate staging memory failed.");
+                self.device.bind_buffer_memory(staging_buffer, staging_memory, 0).expect("Bind staging memory failed.");
+
+                let ptr = self.device.map_memory(staging_memory, 0, size, vk::MemoryMapFlags::empty()).expect("Map staging memory failed.") as *mut u8;
+                std::ptr::copy_nonoverlapping(data.as_ptr(), ptr, data.len());
+                self.device.unmap_memory(staging_memory);
+
+                self.device.wait_for_fences(&[self.command_buffer_reuse_fence], true, std::u64::MAX).expect("Wait for fence failed.");
+                self.device.reset_fences(&[self.command_buffer_reuse_fence]).expect("Reset fences failed.");
+                self.device.reset_command_buffer(self.command_buffer, vk::CommandBufferResetFlags::RELEASE_RESOURCES).expect("Reset command buffer failed.");
+
+                let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+                self.device.begin_command_buffer(self.command_buffer, &command_buffer_begin_info).expect("Begin commandbuffer");
+
+                let subresource_range = vk::ImageSubresourceRange::builder().aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1).level_count(1).build();
+
+                self.device.cmd_pipeline_barrier(
+                    self.command_buffer,
+                    vk::PipelineStageFlags::TOP_OF_PIPE,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[vk::ImageMemoryBarrier::builder()
+                        .image(img_info.image)
+                        .old_layout(vk::ImageLayout::UNDEFINED)
+                        .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                        .src_access_mask(vk::AccessFlags::empty())
+                        .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                        .subresource_range(subresource_range)
+                        .build()],
+                );
+
+                let (width, height) = match img_info.create_info.size {
+                    ImageSize::SurfaceSize => todo!("Unsuported"),
+                    ImageSize::Fixed(w, h) => (w, h),
+                };
+
+                self.device.cmd_copy_buffer_to_image(
+                    self.command_buffer,
+                    staging_buffer,
+                    img_info.image,
+                    vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &[vk::BufferImageCopy {
+                        buffer_offset: 0,
+                        buffer_row_length: 0,
+                        buffer_image_height: 0,
+                        image_subresource: vk::ImageSubresourceLayers { aspect_mask: vk::ImageAspectFlags::COLOR, mip_level: 0, base_array_layer: 0, layer_count: 1 },
+                        image_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
+                        image_extent: vk::Extent3D { width: width, height: height, depth: 1 },
+                    }],
+                );
+
+                self.device.cmd_pipeline_barrier(
+                    self.command_buffer,
+                    vk::PipelineStageFlags::TRANSFER,
+                    vk::PipelineStageFlags::FRAGMENT_SHADER,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[vk::ImageMemoryBarrier::builder()
+                        .image(img_info.image)
+                        .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                        .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                        .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
+                        .dst_access_mask(vk::AccessFlags::SHADER_READ)
+                        .subresource_range(subresource_range)
+                        .build()],
+                );
+
+                self.device.end_command_buffer(self.command_buffer).expect("End commandbuffer");
+
+                self.device
+                    .queue_submit(
+                        self.present_queue,
+                        &[vk::SubmitInfo::builder().wait_semaphores(&[]).wait_dst_stage_mask(&[]).command_buffers(&vec![self.command_buffer]).signal_semaphores(&[]).build()],
+                        self.command_buffer_reuse_fence,
+                    )
+                    .expect("queue submit failed.");
+                self.device.wait_for_fences(&[self.command_buffer_reuse_fence], true, std::u64::MAX).expect("Wait for fence failed.");
+
+                self.device.destroy_buffer(staging_buffer, None);
+                self.device.free_memory(staging_memory, None);
+            },
+            _ => {
+                todo!("Unhandled")
+            },
+        }
+    }
+
+    pub unsafe fn transition_image(&self, image: RedHotStageImage, layout: vk::ImageLayout, image_aspect_mask: vk::ImageAspectFlags, dst_access_mask: vk::AccessFlags) {
+        self.device.wait_for_fences(&[self.command_buffer_reuse_fence], true, std::u64::MAX).expect("Wait for fence failed.");
+        self.device.reset_fences(&[self.command_buffer_reuse_fence]).expect("Reset fences failed.");
+        self.device.reset_command_buffer(self.command_buffer, vk::CommandBufferResetFlags::RELEASE_RESOURCES).expect("Reset command buffer failed.");
+
+        let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        self.device.begin_command_buffer(self.command_buffer, &command_buffer_begin_info).expect("Begin commandbuffer");
+
+        match image {
+            RedHotStageImage::Image(imagei) => {
+                let img_info = self.get_image(imagei);
+                self.device.cmd_pipeline_barrier(
+                    self.command_buffer,
+                    vk::PipelineStageFlags::TOP_OF_PIPE,
+                    vk::PipelineStageFlags::EARLY_FRAGMENT_TESTS,
+                    vk::DependencyFlags::empty(),
+                    &[],
+                    &[],
+                    &[vk::ImageMemoryBarrier::builder()
+                        .image(img_info.image)
+                        .dst_access_mask(dst_access_mask)
+                        .new_layout(layout)
+                        .old_layout(vk::ImageLayout::UNDEFINED)
+                        .subresource_range(vk::ImageSubresourceRange::builder().aspect_mask(image_aspect_mask).layer_count(1).level_count(1).build())
+                        .build()],
+                );
+            },
+            _ => {
+                todo!("Unhandled")
+            },
+        }
+
+        self.device.end_command_buffer(self.command_buffer).expect("End commandbuffer");
+
+        self.device
+            .queue_submit(
+                self.present_queue,
+                &[vk::SubmitInfo::builder().wait_semaphores(&[]).wait_dst_stage_mask(&[]).command_buffers(&vec![self.command_buffer]).signal_semaphores(&[]).build()],
+                self.command_buffer_reuse_fence,
+            )
+            .expect("queue submit failed.");
+        self.device.wait_for_fences(&[self.command_buffer_reuse_fence], true, std::u64::MAX).expect("Wait for fence failed.");
+        //. Wait for the setup commands to finish
+    }
+
+    // TODO[Resize]: These need to be stored in the renderer and accessed via an index like stages and meshes, since we have to replace them on resize, and when doing so, have to maintain which stages reference which images
+    unsafe fn create_image(&self, create_info: RedHotImageCreateInfo) -> RedHotImageInfo {
+        let (width, height) = match create_info.size {
             ImageSize::SurfaceSize => (self.window_width, self.window_height),
             ImageSize::Fixed(width, height) => (width, height),
         };
@@ -641,13 +826,13 @@ where Vertex: Copy
             .create_image(
                 &vk::ImageCreateInfo::builder()
                     .image_type(vk::ImageType::TYPE_2D)
-                    .format(format)
+                    .format(create_info.format)
                     .extent(*vk::Extent3D::builder().width(width).height(height).depth(1))
                     .mip_levels(1)
                     .array_layers(1)
                     .samples(vk::SampleCountFlags::TYPE_1)
                     .tiling(vk::ImageTiling::OPTIMAL)
-                    .usage(usage)
+                    .usage(create_info.usage)
                     .sharing_mode(vk::SharingMode::EXCLUSIVE),
                 None,
             )
@@ -655,14 +840,14 @@ where Vertex: Copy
 
         let image_memory_req = self.device.get_image_memory_requirements(image);
 
-        let image_memory = self
+        let memory = self
             .device
             .allocate_memory(
                 &vk::MemoryAllocateInfo::builder().allocation_size(image_memory_req.size).memory_type_index(
                     self.device_memory_properties.memory_types[..self.device_memory_properties.memory_type_count as _]
                         .iter()
                         .enumerate()
-                        .find(|(index, memory_type)| (1 << index) & image_memory_req.memory_type_bits != 0 && memory_type.property_flags & memory_flags == memory_flags)
+                        .find(|(index, memory_type)| (1 << index) & image_memory_req.memory_type_bits != 0 && memory_type.property_flags & create_info.memory_flags == create_info.memory_flags)
                         .map(|(index, _memory_type)| index as _)
                         .expect("Unable to find suitable memory index for image."),
                 ),
@@ -670,21 +855,27 @@ where Vertex: Copy
             )
             .unwrap();
 
-        self.device.bind_image_memory(image, image_memory, 0).expect("Unable to bind image memory for image");
+        self.device.bind_image_memory(image, memory, 0).expect("Unable to bind image memory for image");
 
-        let image_view = self
+        let view = self
             .device
             .create_image_view(
                 &vk::ImageViewCreateInfo::builder()
-                    .subresource_range(vk::ImageSubresourceRange::builder().aspect_mask(vk::ImageAspectFlags::DEPTH).level_count(1).layer_count(1).build()) // TODO: For now this has only been used with depth images, figure out wtf an aspect_mask is, and what that needs to be for other images
+                    .subresource_range(vk::ImageSubresourceRange::builder().aspect_mask(create_info.image_aspect_mask).level_count(1).layer_count(1).build()) // TODO: For now this has only been used with depth images, figure out wtf an aspect_mask is, and what that needs to be for other images
                     .image(image)
-                    .format(format)
+                    .format(create_info.format)
                     .view_type(vk::ImageViewType::TYPE_2D),
                 None,
             )
             .unwrap();
 
-        RedHotStageImage::Image(RedHotImageInfo { view: image_view, size, format })
+        RedHotImageInfo { view, image, memory, create_info }
+    }
+
+    pub fn register_image(&mut self, create_info: RedHotImageCreateInfo) -> ImageIndex {
+        println!("Registering image");
+        self.registered_images.push(unsafe { self.create_image(create_info) });
+        ImageIndex(self.registered_images.len() - 1)
     }
 
     pub unsafe fn register_stage<const N_VERTEX_ATTRIBUTE_DESCRIPTIONS: usize, const N_CLEAR_VALUES: usize>(
@@ -720,7 +911,7 @@ where Vertex: Copy
             (self.window_width, self.window_height)
         } else {
             match images.first().expect("Render stage with no target images") {
-                RedHotStageImage::Image(img_info) => match img_info.size {
+                RedHotStageImage::Image(imagei) => match self.get_image(*imagei).create_info.size {
                     ImageSize::SurfaceSize => (self.window_width, self.window_height),
                     ImageSize::Fixed(width, height) => (width, height),
                 },
@@ -728,7 +919,7 @@ where Vertex: Copy
             }
         };
 
-        let framebuffers = create_framebuffers(&self.device, &self.swapchain_image_views, render_pass, n_framebuffers, &images, width, height);
+        let framebuffers = create_framebuffers(&self.device, &self.swapchain_image_views, render_pass, n_framebuffers, &images, &self.registered_images, width, height);
 
         let object_descriptor_set_layout = self
             .device
@@ -831,7 +1022,7 @@ where Vertex: Copy
                         .image_info(&[*vk::DescriptorImageInfo::builder()
                             .sampler(sampler)
                             .image_view(match img {
-                                RedHotStageImage::Image(img_info) => img_info.view,
+                                RedHotStageImage::Image(imagei) => self.get_image(*imagei).view,
                                 RedHotStageImage::SwapchainImage() => todo!(), // TODO[presentable-images]: This needs to know about the associated rederers swapchain image views, if such exist?
                             })
                             .image_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)])],
@@ -909,6 +1100,29 @@ where Vertex: Copy
         self.swapchain_image_views = swapchain_image_views;
         self.swapchain_images = swapchain_images;
 
+        for stage in &self.stages {
+            for image in &stage.images {
+                match image {
+                    RedHotStageImage::Image(imagei) => {
+                        let img_info = self.get_image(*imagei);
+                        match img_info.create_info.size {
+                            ImageSize::SurfaceSize => {
+                                //. Re-create images that are supposed to be the full surface size
+                                unsafe {
+                                    self.device.destroy_image_view(img_info.view, None);
+                                    self.device.destroy_image(img_info.image, None);
+                                    self.device.free_memory(img_info.memory, None);
+                                    self.registered_images[Into::<usize>::into(*imagei)] = self.create_image(img_info.create_info);
+                                }
+                            },
+                            ImageSize::Fixed(_, _) => {}, //. These are fixed size, and don't need re-creation
+                        }
+                    },
+                    RedHotStageImage::SwapchainImage() => {}, //. This is just a sentinel to indicate that we shoud luse the swapchain image, those have already been re-created
+                }
+            }
+        }
+
         for stage in &mut self.stages {
             match stage.size {
                 ImageSize::SurfaceSize => {
@@ -920,9 +1134,13 @@ where Vertex: Copy
                             stage.render_pass,
                             self.swapchain_images.len(),
                             &stage.images,
+                            &self.registered_images,
                             window_width,
                             window_height,
                         )
+                    };
+                    for framebuffer in &stage.framebuffers {
+                        println!("    framebuffer.size = ({}, {})", framebuffer.width, framebuffer.height);
                     }
                 },
                 ImageSize::Fixed(_, _) => {},
@@ -1074,6 +1292,10 @@ where Vertex: Copy
         &self.registered_meshes.get(Into::<usize>::into(meshi)).unwrap_or_else(|| panic!("Use of unregistered mesh: {meshi}")).0
     }
 
+    pub fn get_image(&self, imagei: ImageIndex) -> &RedHotImageInfo {
+        &self.registered_images.get(Into::<usize>::into(imagei)).unwrap_or_else(|| panic!("Use of unregistered image: {imagei:?}"))
+    }
+
     pub fn render_begin<DU>(&mut self, draw_uniform: DU)
     where DU: Copy {
         unsafe {
@@ -1174,6 +1396,7 @@ where Vertex: Copy
         let stage = &mut self.stages[stagei.0];
         let current_render = self.current_render.as_mut().expect("Call render_begin before calling render_stage");
         let stage_framebuffer = stage.get_framebuffer(current_render.present_index);
+        // println!("Render stage {}, with size ({}, {})", stage.name, stage_framebuffer.width, stage_framebuffer.height);
         let scissors = [*Rect2D::builder().extent(*vk::Extent2D::builder().width(stage_framebuffer.width).height(stage_framebuffer.height))];
         let viewports = [vk::Viewport { x: 0.0, y: 0.0, width: stage_framebuffer.width as f32, height: stage_framebuffer.height as f32, min_depth: 0.0, max_depth: 1.0 }];
 
