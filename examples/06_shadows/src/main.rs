@@ -13,17 +13,18 @@ use red_hot::{
 };
 
 use winit::{
-    event::{DeviceEvent::MouseMotion, ElementState, Event, KeyboardInput, VirtualKeyCode, WindowEvent},
-    event_loop::{ControlFlow, EventLoop},
-    platform::run_return::EventLoopExtRunReturn,
-    window::WindowBuilder,
+    event::{DeviceEvent::MouseMotion, ElementState, Event, KeyEvent, WindowEvent},
+    event_loop::EventLoop,
+    keyboard::{KeyCode, PhysicalKey},
+    platform::pump_events::EventLoopExtPumpEvents,
+    window::Window,
 };
 
 fn main() {
     unsafe {
         println!("Example 06: shadows");
-        let mut window_width: u32 = 500;
-        let mut window_height: u32 = 500;
+        let mut window_width: u32 = 2000;
+        let mut window_height: u32 = 1200;
 
         #[derive(Clone, Debug, Copy)]
         #[repr(C)]
@@ -172,12 +173,12 @@ fn main() {
 
         let proj_mat = perspective_matrix(TAU / 4.0, 0.1, 10000.0);
 
-        let mut event_loop = EventLoop::new();
-        let window = WindowBuilder::new()
-            .with_title("06-shadows")
-            .with_inner_size(winit::dpi::LogicalSize::new(f64::from(window_width), f64::from(window_height)))
-            .build(&event_loop)
+        let mut event_loop = EventLoop::new().expect("Failed to create new event loop? How can this even fail???");
+
+        let window = event_loop
+            .create_window(Window::default_attributes().with_title("06-shadows").with_inner_size(winit::dpi::LogicalSize::new(window_width, window_height)))
             .unwrap();
+
         window.set_cursor_grab(winit::window::CursorGrabMode::Confined).unwrap();
         window.set_cursor_visible(false);
 
@@ -211,7 +212,7 @@ fn main() {
                 max_depth_bounds: 1.0,
                 ..Default::default()
             },
-            *vk::PipelineColorBlendStateCreateInfo::builder().attachments(&[]),
+            vk::PipelineColorBlendStateCreateInfo::default().attachments(&[]),
             [
                 vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
                 vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
@@ -228,7 +229,7 @@ fn main() {
                 ..Default::default()
             }],
             [vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } }],
-            &[(*vk::SubpassDescription::builder()
+            &[(vk::SubpassDescription::default()
                 .depth_stencil_attachment(&vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL })
                 .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS))],
             &[vk::SubpassDependency {
@@ -271,7 +272,7 @@ fn main() {
                 max_depth_bounds: 1.0,
                 ..Default::default()
             },
-            *vk::PipelineColorBlendStateCreateInfo::builder().attachments(&[]),
+            vk::PipelineColorBlendStateCreateInfo::default().attachments(&[]),
             [
                 vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 }, //. Position
                 vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 }, //. Normal
@@ -288,7 +289,7 @@ fn main() {
                 ..Default::default()
             }],
             [vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } }],
-            &[(*vk::SubpassDescription::builder()
+            &[(vk::SubpassDescription::default()
                 .depth_stencil_attachment(&vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL })
                 .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS))],
             &[vk::SubpassDependency {
@@ -330,7 +331,7 @@ fn main() {
                 max_depth_bounds: 1.0,
                 ..Default::default()
             },
-            *vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
+            vk::PipelineColorBlendStateCreateInfo::default().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
                 blend_enable: 0,
                 src_color_blend_factor: vk::BlendFactor::SRC_COLOR,
                 dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_DST_COLOR,
@@ -368,7 +369,7 @@ fn main() {
                 vk::ClearValue { color: vk::ClearColorValue { float32: [0.09, 0.05, 0.14, 1.0] } },
                 vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } },
             ],
-            &[*vk::SubpassDescription::builder()
+            &[vk::SubpassDescription::default()
                 .color_attachments(&[vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL }])
                 .depth_stencil_attachment(&vk::AttachmentReference { attachment: 1, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL })
                 .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)],
@@ -382,7 +383,7 @@ fn main() {
             &[
                 (
                     &red_hot::renderer::RedHotStageImage::Image(shadow_texture),
-                    *vk::SamplerCreateInfo::builder()
+                    vk::SamplerCreateInfo::default()
                         .compare_enable(true)
                         .compare_op(vk::CompareOp::LESS_OR_EQUAL)
                         .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
@@ -391,7 +392,7 @@ fn main() {
                 ),
                 (
                     &red_hot::renderer::RedHotStageImage::Image(shadow_texture2),
-                    *vk::SamplerCreateInfo::builder()
+                    vk::SamplerCreateInfo::default()
                         .compare_enable(true)
                         .compare_op(vk::CompareOp::LESS_OR_EQUAL)
                         .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
@@ -414,7 +415,7 @@ fn main() {
                 max_depth_bounds: 1.0,
                 ..Default::default()
             },
-            *vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
+            vk::PipelineColorBlendStateCreateInfo::default().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
                 blend_enable: 0,
                 src_color_blend_factor: vk::BlendFactor::SRC_COLOR,
                 dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_DST_COLOR,
@@ -453,7 +454,7 @@ fn main() {
                 vk::ClearValue { color: vk::ClearColorValue { float32: [1.0, 0.0, 0.0, 0.0] } },
                 vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } },
             ],
-            &[*vk::SubpassDescription::builder()
+            &[vk::SubpassDescription::default()
                 .color_attachments(&[vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL }])
                 .depth_stencil_attachment(&vk::AttachmentReference { attachment: 1, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL })
                 .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)],
@@ -564,7 +565,7 @@ fn main() {
                 max_depth_bounds: 1.0,
                 ..Default::default()
             },
-            *vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
+            vk::PipelineColorBlendStateCreateInfo::default().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
                 blend_enable: 1,
                 src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
                 dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
@@ -590,7 +591,7 @@ fn main() {
                 ..Default::default()
             }],
             [vk::ClearValue { color: vk::ClearColorValue { float32: [1.0, 0.0, 0.0, 0.0] } }],
-            &[*vk::SubpassDescription::builder()
+            &[vk::SubpassDescription::default()
                 .color_attachments(&[vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL }])
                 .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)],
             &[vk::SubpassDependency {
@@ -602,7 +603,7 @@ fn main() {
             }],
             &[(
                 &red_hot::renderer::RedHotStageImage::Image(texture_atlas),
-                *vk::SamplerCreateInfo::builder()
+                vk::SamplerCreateInfo::default()
                     .compare_enable(false)
                     .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
                     .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
@@ -698,152 +699,165 @@ fn main() {
                 scale: Vec3::one(),
             };
 
-            event_loop.run_return(|event, _, control_flow| {
-            *control_flow = ControlFlow::Poll;
-            match event {
-                Event::WindowEvent {
-                    event: WindowEvent::CloseRequested | WindowEvent::KeyboardInput { input: KeyboardInput { state: ElementState::Pressed, virtual_keycode: Some(VirtualKeyCode::Escape), .. }, .. },
-                    ..
-                } => {
-                    should_close = true; //. if we pressed close, close
-                    *control_flow = ControlFlow::Exit;
-                },
-                Event::WindowEvent { event: WindowEvent::KeyboardInput { input: KeyboardInput { state: ElementState::Pressed, virtual_keycode: Some(keycode), .. }, .. }, .. } => match keycode {
-                    VirtualKeyCode::W => position += Vec3::<f32>::forward().rotate(camera_transform.rotation),
-                    VirtualKeyCode::S => position += Vec3::<f32>::backwards().rotate(camera_transform.rotation),
-                    VirtualKeyCode::A => position += Vec3::<f32>::left().rotate(camera_transform.rotation),
-                    VirtualKeyCode::D => position += Vec3::<f32>::right().rotate(camera_transform.rotation),
-                    VirtualKeyCode::Space => position += Vec3::<f32>::up(),
-                    VirtualKeyCode::LControl => position += Vec3::<f32>::down(),
-                    VirtualKeyCode::R => cam_pitch -= 0.3,
-                    VirtualKeyCode::F => cam_pitch += 0.3,
-                    VirtualKeyCode::Q => cam_yaw -= 0.3,
-                    VirtualKeyCode::E => cam_yaw += 0.3,
-                    VirtualKeyCode::Key1 => control -= 0.3,
-                    VirtualKeyCode::Key2 => control += 0.3,
-                    VirtualKeyCode::U => a -= 0.1,
-                    VirtualKeyCode::I => a += 0.1,
-                    VirtualKeyCode::J => b -= 0.1,
-                    VirtualKeyCode::K => b += 0.1,
-                    VirtualKeyCode::N => c -= 0.1,
-                    VirtualKeyCode::M => c += 0.1,
-                    _ => (),
-                },
-                Event::DeviceEvent { event: MouseMotion { delta: (mouse_x, mouse_y) }, .. } => {
-                    if focused {
-                        cam_yaw += mouse_x as f32 / 40.0;
-                        cam_pitch += mouse_y as f32 / 40.0;
-                    }
-                },
-                Event::WindowEvent { event: WindowEvent::Resized(_physical_size), .. } => {
-                    let size = window.inner_size(); //. I think this is what we actually care about?? The other one did a weird "physical" resize that doesn't appear to do anything, but fucks my swapchain
-                    if window_width != size.width || window_height != size.height {
-                        window_width = size.width;
-                        window_height = size.height;
-                        // BUG: On GLaDOS (Debian KDE Wayland) windows get moved instead of resized, and the size is incomprehensible?!?!
-                        renderer.resize_window(window_width, window_height);
-                    }
-                },
-                Event::WindowEvent { event: WindowEvent::Focused(focus), .. } => {
-                    focused = focus;
-                    window.set_cursor_visible(!focus);
-                },
-                #[rustfmt::skip]
-                Event::MainEventsCleared => {
-                    renderer.render_begin(DrawUniform { _dummy: 69.0 });
-                    renderer.render_stage(
-                        shadow_stage,
-                        ShadowStageUniform { view_mat: light_box.transform.get_inverse_matrix(), proj_mat: light_proj_matrix },
-                        objects.iter().map(|x| x.mesh).collect(),
-                        objects.iter().map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 }).collect(),
-                    );
-                    renderer.render_stage(
-                        shadow_stage2,
-                        ShadowStageUniform { view_mat: light_box2.transform.get_inverse_matrix(), proj_mat: light_proj_matrix },
-                        objects.iter().map(|x| x.mesh).collect(),
-                        objects.iter().map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 }).collect(),
-                    );
-                    renderer.render_stage(
-                        default_stage,
-                        RenderStageUniform {
-                            view_mat: camera_transform.get_inverse_matrix(),
-                            proj_mat,
-                            light_view_proj_mat: light_proj_matrix * light_box.transform.get_inverse_matrix(),
-                            light_view_proj_mat2: light_proj_matrix * light_box2.transform.get_inverse_matrix(),
-                            light_dir: [light_dir.x, light_dir.y, light_dir.z, 0.0],
-                            light_dir2: [light_dir2.x, light_dir2.y, light_dir2.z, 0.0],
-                        },
-                        objects
-                            .iter()
-                            .map(|x| x.mesh)
-                            .chain([
-                                room_box.mesh,
-                                light_box.mesh,
-                                light_box2.mesh,
-                            ])
-                            .collect(),
-                        objects
-                            .iter()
-                            .map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 })
-                            .chain([
-                                ObjectUniform { model_mat: room_box.transform.get_matrix(), is_light: 0 },
-                                ObjectUniform { model_mat: light_box.transform.get_matrix(), is_light: 1 },
-                                ObjectUniform { model_mat: light_box2.transform.get_matrix(), is_light: 1 },
-                            ])
-                            .collect(),
-                    );
-                    renderer.render_stage(
-                        debug_stage,
-                        RenderStageUniform {
-                            view_mat: camera_transform.get_inverse_matrix(),
-                            proj_mat,
-                            light_view_proj_mat: Mat4x4::<f32>::zero(), //. Unused
-                            light_view_proj_mat2: Mat4x4::<f32>::zero(), //. Unused
-                            light_dir: [0.0, 0.0, 0.0, 0.0], //. Unused
-                            light_dir2: [0.0, 0.0, 0.0, 0.0], //. Unused
-                        },
-                        objects
-                            .iter()
-                            .map(|x| x.mesh)
-                            .chain([
-                                room_box.mesh,
-                                light_box.mesh,
-                                light_box2.mesh,
-                            ])
-                            .collect(),
-                        objects
-                            .iter()
-                            .map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 })
-                            .chain([
-                                ObjectUniform { model_mat: room_box.transform.get_matrix(), is_light: 0 },
-                                ObjectUniform { model_mat: light_box.transform.get_matrix(), is_light: 1 },
-                                ObjectUniform { model_mat: light_box2.transform.get_matrix(), is_light: 1 },
-                            ])
-                            .collect(),
-                    );
-                    renderer.render_stage(
-                        ui_stage,
-                        DrawUniform{ _dummy: 0.0 }, //. Dummy stage uniform
-                        vec![
-                            plane_meshi,
-                            plane_meshi,
-                            plane_meshi,
-                            plane_meshi,
-                        ],
-                        vec![
-                            UiObjectUniform { model_mat: Transform { position: Vec3 { x:  1.0 * (1.0 - (0.0001 * window_height as f32)), y:  1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 }, rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU/4.0), scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 } }.get_matrix(), color: Vec3 { x: 1.0, y: 1.0, z: 1.0 } },
-                            UiObjectUniform { model_mat: Transform { position: Vec3 { x:  1.0 * (1.0 - (0.0001 * window_height as f32)), y: -1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 }, rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU/4.0), scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 } }.get_matrix(), color: Vec3 { x: 1.0, y: 0.0, z: 1.0 } },
-                            UiObjectUniform { model_mat: Transform { position: Vec3 { x: -1.0 * (1.0 - (0.0001 * window_height as f32)), y:  1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 }, rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU/4.0), scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 } }.get_matrix(), color: Vec3 { x: 0.0, y: 1.0, z: 1.0 } },
-                            UiObjectUniform { model_mat: Transform { position: Vec3 { x: -1.0 * (1.0 - (0.0001 * window_height as f32)), y: -1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 }, rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU/4.0), scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 } }.get_matrix(), color: Vec3 { x: 0.0, y: 0.0, z: 1.0 } },
-                        ],
-                    );
-                    renderer.render_commit();
-                },
-                Event::RedrawEventsCleared => *control_flow = ControlFlow::Exit, //. "return"
-                _ => (),                                                         //. ignore other events
-            }
-        });
+            event_loop.pump_events(Some(std::time::Duration::ZERO), |event, _| {
+                match event {
+                    Event::WindowEvent {
+                        event: WindowEvent::CloseRequested | WindowEvent::KeyboardInput { event: KeyEvent { state: ElementState::Pressed, physical_key: PhysicalKey::Code(KeyCode::Escape), .. }, .. },
+                        ..
+                    } => {
+                        should_close = true; //. if we pressed close, close
+                                             // *control_flow = ControlFlow::Exit;
+                    },
+                    Event::WindowEvent { event: WindowEvent::KeyboardInput { event: KeyEvent { state: ElementState::Pressed, physical_key: PhysicalKey::Code(keycode), .. }, .. }, .. } => {
+                        match keycode {
+                            KeyCode::KeyW => position += Vec3::<f32>::forward().rotate(camera_transform.rotation),
+                            KeyCode::KeyS => position += Vec3::<f32>::backwards().rotate(camera_transform.rotation),
+                            KeyCode::KeyA => position += Vec3::<f32>::left().rotate(camera_transform.rotation),
+                            KeyCode::KeyD => position += Vec3::<f32>::right().rotate(camera_transform.rotation),
+                            KeyCode::Space => position += Vec3::<f32>::up(),
+                            KeyCode::ControlLeft => position += Vec3::<f32>::down(),
+                            KeyCode::KeyR => cam_pitch -= 0.3,
+                            KeyCode::KeyF => cam_pitch += 0.3,
+                            KeyCode::KeyQ => cam_yaw -= 0.3,
+                            KeyCode::KeyE => cam_yaw += 0.3,
+                            KeyCode::Digit1 => control -= 0.3,
+                            KeyCode::Digit2 => control += 0.3,
+                            KeyCode::KeyU => a -= 0.1,
+                            KeyCode::KeyI => a += 0.1,
+                            KeyCode::KeyJ => b -= 0.1,
+                            KeyCode::KeyK => b += 0.1,
+                            KeyCode::KeyN => c -= 0.1,
+                            KeyCode::KeyM => c += 0.1,
+                            _ => (),
+                        }
+                    },
+                    Event::DeviceEvent { event: MouseMotion { delta: (mouse_x, mouse_y) }, .. } => {
+                        if focused {
+                            cam_yaw += mouse_x as f32 / 40.0;
+                            cam_pitch += mouse_y as f32 / 40.0;
+                        }
+                    },
+                    Event::WindowEvent { event: WindowEvent::Resized(_physical_size), .. } => {
+                        // TODO[Perf]: Wait until we've exited the pump_event to actually resize, and only register the size change here. This avoids doing a bunch of resize work repeadetly when someone is dragging.
+                        let size = window.inner_size(); //. I think this is what we actually care about?? The other one did a weird "physical" resize that doesn't appear to do anything, but fucks my swapchain
+                        if window_width != size.width || window_height != size.height {
+                            window_width = size.width;
+                            window_height = size.height;
+                            // BUG: On GLaDOS (Debian KDE Wayland) windows get moved instead of resized, and the size is incomprehensible?!?!
+                            renderer.resize_window(window_width, window_height);
+                        }
+                    },
+                    Event::WindowEvent { event: WindowEvent::Focused(focus), .. } => {
+                        focused = focus;
+                        window.set_cursor_visible(!focus);
+                    },
+                    // Event::RedrawEventsCleared => *control_flow = ControlFlow::Exit, //. "return"
+                    _ => (), //. ignore other events
+                }
+            });
 
+            {
+                //. Render
+                renderer.render_begin(DrawUniform { _dummy: 69.0 });
+                renderer.render_stage(
+                    shadow_stage,
+                    ShadowStageUniform { view_mat: light_box.transform.get_inverse_matrix(), proj_mat: light_proj_matrix },
+                    objects.iter().map(|x| x.mesh).collect(),
+                    objects.iter().map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 }).collect(),
+                );
+                renderer.render_stage(
+                    shadow_stage2,
+                    ShadowStageUniform { view_mat: light_box2.transform.get_inverse_matrix(), proj_mat: light_proj_matrix },
+                    objects.iter().map(|x| x.mesh).collect(),
+                    objects.iter().map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 }).collect(),
+                );
+                renderer.render_stage(
+                    default_stage,
+                    RenderStageUniform {
+                        view_mat: camera_transform.get_inverse_matrix(),
+                        proj_mat,
+                        light_view_proj_mat: light_proj_matrix * light_box.transform.get_inverse_matrix(),
+                        light_view_proj_mat2: light_proj_matrix * light_box2.transform.get_inverse_matrix(),
+                        light_dir: [light_dir.x, light_dir.y, light_dir.z, 0.0],
+                        light_dir2: [light_dir2.x, light_dir2.y, light_dir2.z, 0.0],
+                    },
+                    objects.iter().map(|x| x.mesh).chain([room_box.mesh, light_box.mesh, light_box2.mesh]).collect(),
+                    objects
+                        .iter()
+                        .map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 })
+                        .chain([
+                            ObjectUniform { model_mat: room_box.transform.get_matrix(), is_light: 0 },
+                            ObjectUniform { model_mat: light_box.transform.get_matrix(), is_light: 1 },
+                            ObjectUniform { model_mat: light_box2.transform.get_matrix(), is_light: 1 },
+                        ])
+                        .collect(),
+                );
+                renderer.render_stage(
+                    debug_stage,
+                    RenderStageUniform {
+                        view_mat: camera_transform.get_inverse_matrix(),
+                        proj_mat,
+                        light_view_proj_mat: Mat4x4::<f32>::zero(),  //. Unused
+                        light_view_proj_mat2: Mat4x4::<f32>::zero(), //. Unused
+                        light_dir: [0.0, 0.0, 0.0, 0.0],             //. Unused
+                        light_dir2: [0.0, 0.0, 0.0, 0.0],            //. Unused
+                    },
+                    objects.iter().map(|x| x.mesh).chain([room_box.mesh, light_box.mesh, light_box2.mesh]).collect(),
+                    objects
+                        .iter()
+                        .map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 })
+                        .chain([
+                            ObjectUniform { model_mat: room_box.transform.get_matrix(), is_light: 0 },
+                            ObjectUniform { model_mat: light_box.transform.get_matrix(), is_light: 1 },
+                            ObjectUniform { model_mat: light_box2.transform.get_matrix(), is_light: 1 },
+                        ])
+                        .collect(),
+                );
+                renderer.render_stage(
+                    ui_stage,
+                    DrawUniform { _dummy: 0.0 }, //. Dummy stage uniform
+                    vec![plane_meshi, plane_meshi, plane_meshi, plane_meshi],
+                    vec![
+                        UiObjectUniform {
+                            model_mat: Transform {
+                                position: Vec3 { x: 1.0 * (1.0 - (0.0001 * window_height as f32)), y: 1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 },
+                                rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU / 4.0),
+                                scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 },
+                            }
+                            .get_matrix(),
+                            color: Vec3 { x: 1.0, y: 1.0, z: 1.0 },
+                        },
+                        UiObjectUniform {
+                            model_mat: Transform {
+                                position: Vec3 { x: 1.0 * (1.0 - (0.0001 * window_height as f32)), y: -1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 },
+                                rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU / 4.0),
+                                scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 },
+                            }
+                            .get_matrix(),
+                            color: Vec3 { x: 1.0, y: 0.0, z: 1.0 },
+                        },
+                        UiObjectUniform {
+                            model_mat: Transform {
+                                position: Vec3 { x: -1.0 * (1.0 - (0.0001 * window_height as f32)), y: 1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 },
+                                rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU / 4.0),
+                                scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 },
+                            }
+                            .get_matrix(),
+                            color: Vec3 { x: 0.0, y: 1.0, z: 1.0 },
+                        },
+                        UiObjectUniform {
+                            model_mat: Transform {
+                                position: Vec3 { x: -1.0 * (1.0 - (0.0001 * window_height as f32)), y: -1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 },
+                                rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU / 4.0),
+                                scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 },
+                            }
+                            .get_matrix(),
+                            color: Vec3 { x: 0.0, y: 0.0, z: 1.0 },
+                        },
+                    ],
+                );
+                renderer.render_commit();
+            }
             last_time = current_time;
             current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
             dt = (current_time - last_time).as_secs_f32();
@@ -852,7 +866,7 @@ fn main() {
             if frametime_circ_buffer[N_FRAMETIME - 1] != 0.0 {
                 //. Wait untill buffer is filled
                 let avg_frametime = frametime_circ_buffer.iter().sum::<f32>() / N_FRAMETIME as f32;
-                // println!("fps: {}", 1.0 / avg_frametime);
+                println!("fps: {}", 1.0 / avg_frametime);
             }
 
             dt *= a; //. Modifyer

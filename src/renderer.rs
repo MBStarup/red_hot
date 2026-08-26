@@ -1,9 +1,9 @@
-use ash::vk::Framebuffer;
+use ash::vk::{Framebuffer, PipelineRasterizationStateCreateInfo};
 use ash::{
-    extensions::{
-        ext::DebugUtils,
-        khr::{Surface, Swapchain},
-    },
+    ext::debug_utils,
+    khr::{surface, swapchain},
+};
+use ash::{
     util::read_spv,
     vk::{
         self, AttachmentDescription, Buffer, ClearValue, CommandBuffer, DescriptorType, DeviceMemory, Fence, ImageView, PhysicalDevice, PhysicalDeviceMemoryProperties, Pipeline,
@@ -13,7 +13,7 @@ use ash::{
     Entry,
 };
 pub use ash::{Device, Instance};
-use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use core::panic;
 use std::{
@@ -65,9 +65,9 @@ where Vertex: Copy
     pub indices: Vec<Index>,
 }
 
-struct RenderStage {
+struct RenderStage<'a> {
     name: String,
-    pipeline: RedHotPipeline, // TODO: Support multiple pipelines
+    pipeline: RedHotPipeline<'a>, // TODO: Support multiple pipelines
     stage_descriptor_set: vk::DescriptorSet,
     object_descriptor_set: vk::DescriptorSet,
     vertex_attribute_descriptions: Box<[VertexInputAttributeDescription]>, // NOTE[perf]: Written VERY rarely (only during setup), read rarely, only during pipeline creation/re-creation
@@ -114,20 +114,20 @@ pub struct RedHotImageInfo {
     create_info: RedHotImageCreateInfo,
 }
 
-pub struct RedHotPipelineCreateInfo {
+pub struct RedHotPipelineCreateInfo<'a> {
     vertex_shader_module: ShaderModule,
     fragment_shader_module: ShaderModule,
     pipeline_layout: PipelineLayout,
-    rasterization_state: vk::PipelineRasterizationStateCreateInfo,
-    depth_stencil_state: PipelineDepthStencilStateCreateInfo,
-    color_blend_state: PipelineColorBlendStateCreateInfo,
+    rasterization_state: PipelineRasterizationStateCreateInfo<'a>,
+    depth_stencil_state: PipelineDepthStencilStateCreateInfo<'a>,
+    color_blend_state: PipelineColorBlendStateCreateInfo<'a>,
 }
-struct RedHotPipeline {
+struct RedHotPipeline<'a> {
     graphics_pipeline: Option<Pipeline>,
-    create_info: RedHotPipelineCreateInfo,
+    create_info: RedHotPipelineCreateInfo<'a>,
 }
 
-impl RenderStage {
+impl RenderStage<'_> {
     pub fn destroy_pipeline(&mut self, device: &Device) {
         match self.pipeline.graphics_pipeline {
             None => return,
@@ -152,12 +152,12 @@ impl RenderStage {
     pub unsafe fn create_graphics_pipeline<Vertex>(&mut self, device: &Device, width: u32, height: u32) -> Pipeline {
         // TODO: Check for (and remove) old graphics pipeline, in case this gets called "badly" (i.e. someone hasn't cleaned up the old first)
         println!("Creating graphics pipeline ({width}, {height})");
-        let scissors = [*Rect2D::builder().extent(*vk::Extent2D::builder().width(width).height(height))];
+        let scissors = [Rect2D::default().extent(vk::Extent2D::default().width(width).height(height))];
         let viewports = [vk::Viewport { x: 0.0, y: 0.0, width: width as f32, height: height as f32, min_depth: 0.0, max_depth: 1.0 }];
         *(device)
             .create_graphics_pipelines(
                 vk::PipelineCache::null(),
-                &[vk::GraphicsPipelineCreateInfo::builder()
+                &[vk::GraphicsPipelineCreateInfo::default()
                     .stages(&[
                         vk::PipelineShaderStageCreateInfo {
                             s_type: vk::StructureType::PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -175,20 +175,19 @@ impl RenderStage {
                         },
                     ])
                     .vertex_input_state(
-                        &vk::PipelineVertexInputStateCreateInfo::builder()
+                        &vk::PipelineVertexInputStateCreateInfo::default()
                             .vertex_attribute_descriptions(&self.vertex_attribute_descriptions)
                             .vertex_binding_descriptions(&[vk::VertexInputBindingDescription { binding: 0, stride: mem::size_of::<Vertex>() as u32, input_rate: vk::VertexInputRate::VERTEX }]), //? Shouldn't this use the padded size? or am I misunderstanding that? If I am, fix the functions that make the vertex/index buffer, right now it doesn't matter though, as they seem to always be the same
                     )
                     .input_assembly_state(&vk::PipelineInputAssemblyStateCreateInfo { topology: vk::PrimitiveTopology::TRIANGLE_LIST, ..Default::default() })
-                    .viewport_state(&vk::PipelineViewportStateCreateInfo::builder().scissors(&scissors).viewports(&viewports))
+                    .viewport_state(&vk::PipelineViewportStateCreateInfo::default().scissors(&scissors).viewports(&viewports))
                     .rasterization_state(&self.pipeline.create_info.rasterization_state)
                     .multisample_state(&vk::PipelineMultisampleStateCreateInfo { rasterization_samples: vk::SampleCountFlags::TYPE_1, ..Default::default() })
                     .depth_stencil_state(&self.pipeline.create_info.depth_stencil_state)
                     .color_blend_state(&self.pipeline.create_info.color_blend_state)
-                    .dynamic_state(&vk::PipelineDynamicStateCreateInfo::builder().dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]))
+                    .dynamic_state(&vk::PipelineDynamicStateCreateInfo::default().dynamic_states(&[vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR]))
                     .layout(self.pipeline.create_info.pipeline_layout)
-                    .render_pass(self.render_pass)
-                    .build()],
+                    .render_pass(self.render_pass)],
                 None,
             )
             .expect("Unable to create graphics pipeline")
@@ -215,7 +214,7 @@ struct CurrentRenderInfo {
     stage_uniform_memory: Vec<(Buffer, DeviceMemory)>,
 }
 
-pub struct Renderer<Vertex>
+pub struct Renderer<'a, Vertex>
 where Vertex: Copy
 {
     _phantom: Option<Vertex>,
@@ -230,7 +229,7 @@ where Vertex: Copy
     // TODO[multi-surface-support]: Combine these, then do a Surface -> Swapchain map
     // TODO[QOL]: Wrap in Vec<ImageInfo>, or maybe it's own type to avoid repetition?
     swapchain: SwapchainKHR,
-    swapchain_loader: Swapchain,
+    swapchain_loader: swapchain::Device,
     swapchain_image_views: Vec<ImageView>,
     pub swapchain_image_format: vk::Format,
     swapchain_images: Vec<vk::Image>,
@@ -246,7 +245,7 @@ where Vertex: Copy
     //. Things we need to clean?
     min_uniform_buffer_offset_alignment: usize,
 
-    stages: Vec<RenderStage>,
+    stages: Vec<RenderStage<'a>>,
 
     draw_descriptor_set: vk::DescriptorSet,
     draw_descriptor_set_layout: vk::DescriptorSetLayout,
@@ -304,7 +303,7 @@ unsafe fn create_framebuffers(
         .map(|i| RedHotFramebuffer {
             framebuffer: device
                 .create_framebuffer(
-                    &vk::FramebufferCreateInfo::builder()
+                    &vk::FramebufferCreateInfo::default()
                         .render_pass(render_pass)
                         .attachments(
                             &images
@@ -335,8 +334,8 @@ unsafe fn swapchain_stuff(
     surface: SurfaceKHR,
     window_width: u32,
     window_height: u32,
-) -> (Swapchain, SwapchainKHR, vk::Format, Vec<vk::ImageView>, Vec<vk::Image>) {
-    let surface_loader = Surface::new(&entry, &instance); //? Why is the surface loader a surface, and what is "surface loader"??? and why is the surface a KHR_surface?? What are these types??
+) -> (swapchain::Device, SwapchainKHR, vk::Format, Vec<vk::ImageView>, Vec<vk::Image>) {
+    let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
 
     let surface_format = surface_loader.get_physical_device_surface_formats(pdevice, surface).unwrap()[0];
 
@@ -345,18 +344,21 @@ unsafe fn swapchain_stuff(
     if surface_capabilities.max_image_count > 0 && desired_image_count > surface_capabilities.max_image_count {
         desired_image_count = surface_capabilities.max_image_count;
     }
-    let swapchain_loader = Swapchain::new(&instance, &device);
+    let swapchain_loader = ash::khr::swapchain::Device::new(&instance, &device);
 
     let swapchain = swapchain_loader
         .create_swapchain(
-            &vk::SwapchainCreateInfoKHR::builder()
+            &vk::SwapchainCreateInfoKHR::default()
                 .surface(surface)
                 .min_image_count(desired_image_count)
                 .image_color_space(surface_format.color_space)
                 .image_format(surface_format.format)
                 .image_extent(match surface_capabilities.current_extent.width {
                     std::u32::MAX => vk::Extent2D { width: window_width, height: window_height },
-                    _ => surface_capabilities.current_extent,
+                    _ => {
+                        println!("Cannot use window size as spwachain extend, forced to use {:?}", surface_capabilities.current_extent);
+                        surface_capabilities.current_extent
+                    },
                 })
                 .image_usage(vk::ImageUsageFlags::COLOR_ATTACHMENT)
                 .image_sharing_mode(vk::SharingMode::EXCLUSIVE)
@@ -388,7 +390,7 @@ unsafe fn swapchain_stuff(
     let image_views: Vec<vk::ImageView> = images
         .iter()
         .map(|&image| {
-            let create_view_info = vk::ImageViewCreateInfo::builder()
+            let create_view_info = vk::ImageViewCreateInfo::default()
                 .view_type(vk::ImageViewType::TYPE_2D)
                 .format(surface_format.format)
                 .components(vk::ComponentMapping { r: vk::ComponentSwizzle::R, g: vk::ComponentSwizzle::G, b: vk::ComponentSwizzle::B, a: vk::ComponentSwizzle::A }) // NOTE: I'm pretty sure omitting this would set it to default(), which I think is zero (derived from i32), which correseponds to VK_COMPONENT_SWIZZLE_IDENTITY, which is just saying that each component maps to themselves
@@ -401,7 +403,7 @@ unsafe fn swapchain_stuff(
     (swapchain_loader, swapchain, surface_format.format, image_views, images)
 }
 
-impl<'a, Vertex> Renderer<Vertex>
+impl<'a, Vertex> Renderer<'a, Vertex>
 where Vertex: Copy
 {
     pub fn new(window: &Window, window_width: u32, window_height: u32) -> Renderer<Vertex> {
@@ -413,15 +415,15 @@ where Vertex: Copy
             let layer_names = [CStr::from_bytes_with_nul_unchecked(b"VK_LAYER_KHRONOS_validation\0")]; //. Enables validation
             let layers_names_raw: Vec<*const c_char> = layer_names.iter().map(|raw_name| raw_name.as_ptr()).collect(); //. Just get the afformentioned layernames as pointers, since that's what the api wants
 
-            let mut extension_names = ash_window::enumerate_required_extensions(window.raw_display_handle()).unwrap().to_vec(); //. Get the list of Vulkan extensions required to use the window we have gotten, not sure what those are tho...
-            extension_names.push(DebugUtils::name().as_ptr());
+            let mut extension_names = ash_window::enumerate_required_extensions(window.display_handle().expect("window has no display handle").as_raw()).unwrap().to_vec(); //. Get the list of Vulkan extensions required to use the window we have gotten, not sure what those are tho...
+            extension_names.push(debug_utils::NAME.as_ptr());
 
             //# Creating instance
             let instance: Instance = entry
                 .create_instance(
-                    &vk::InstanceCreateInfo::builder()
+                    &vk::InstanceCreateInfo::default()
                         .application_info(
-                            &vk::ApplicationInfo::builder()
+                            &vk::ApplicationInfo::default()
                                 .application_name(app_name)
                                 .application_version(0)
                                 .engine_name(app_name)
@@ -436,9 +438,9 @@ where Vertex: Copy
                 .expect("Instance creation error");
 
             //# Debug messenger callback
-            let _debug_call_back = DebugUtils::new(&entry, &instance)
+            let _debug_call_back = debug_utils::Instance::new(&entry, &instance)
                 .create_debug_utils_messenger(
-                    &vk::DebugUtilsMessengerCreateInfoEXT::builder()
+                    &vk::DebugUtilsMessengerCreateInfoEXT::default()
                         .message_severity(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING | vk::DebugUtilsMessageSeverityFlagsEXT::INFO)
                         .message_type(vk::DebugUtilsMessageTypeFlagsEXT::GENERAL | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE)
                         .pfn_user_callback(Some(vulkan_debug_callback)),
@@ -447,7 +449,14 @@ where Vertex: Copy
                 .unwrap();
 
             //# Creating surface
-            let surface = ash_window::create_surface(&entry, &instance, window.raw_display_handle(), window.raw_window_handle(), None).unwrap(); //. Creates the surface, i.e. the Vulkan Window, from the actual window
+            let surface = ash_window::create_surface(
+                &entry,
+                &instance,
+                window.display_handle().expect("window has no display handle").as_raw(),
+                window.window_handle().expect("window has no window handle").as_raw(),
+                None,
+            )
+            .unwrap(); //. Creates the surface, i.e. the Vulkan Window, from the actual window
 
             let (pdevice, queue_family_index) = instance
                 .enumerate_physical_devices()
@@ -455,7 +464,9 @@ where Vertex: Copy
                 .iter()
                 .find_map(|pdevice| {
                     instance.get_physical_device_queue_family_properties(*pdevice).iter().enumerate().find_map(|(index, info)| {
-                        if info.queue_flags.contains(vk::QueueFlags::GRAPHICS) && Surface::new(&entry, &instance).get_physical_device_surface_support(*pdevice, index as u32, surface).unwrap() {
+                        if info.queue_flags.contains(vk::QueueFlags::GRAPHICS)
+                            && surface::Instance::new(&entry, &instance).get_physical_device_surface_support(*pdevice, index as u32, surface).unwrap()
+                        {
                             Some((*pdevice, index as u32))
                         } else {
                             None
@@ -472,11 +483,11 @@ where Vertex: Copy
             let device: Device = instance
                 .create_device(
                     pdevice,
-                    &vk::DeviceCreateInfo::builder()
+                    &vk::DeviceCreateInfo::default()
                         .queue_create_infos(std::slice::from_ref(
-                            &vk::DeviceQueueCreateInfo::builder().queue_family_index(queue_family_index).queue_priorities(&[1.0]),
+                            &vk::DeviceQueueCreateInfo::default().queue_family_index(queue_family_index).queue_priorities(&[1.0]),
                         ))
-                        .enabled_extension_names(&[Swapchain::name().as_ptr()])
+                        .enabled_extension_names(&[swapchain::NAME.as_ptr()])
                         .enabled_features(&(vk::PhysicalDeviceFeatures { shader_clip_distance: 1, fill_mode_non_solid: 1, ..Default::default() })),
                     None,
                 )
@@ -485,12 +496,12 @@ where Vertex: Copy
             //# Command Buffer with Sync
             let command_buffer = device
                 .allocate_command_buffers(
-                    &vk::CommandBufferAllocateInfo::builder()
+                    &vk::CommandBufferAllocateInfo::default()
                         .command_buffer_count(1) //. We want 1 command buffer
                         .command_pool(
                             device
                                 .create_command_pool(
-                                    &vk::CommandPoolCreateInfo::builder().flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER).queue_family_index(queue_family_index),
+                                    &vk::CommandPoolCreateInfo::default().flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER).queue_family_index(queue_family_index),
                                     None,
                                 )
                                 .unwrap(),
@@ -502,12 +513,12 @@ where Vertex: Copy
             //# Semaphores and Fences
             let present_complete_semaphore = device.create_semaphore(&vk::SemaphoreCreateInfo::default(), None).unwrap();
 
-            let command_buffer_reuse_fence = device.create_fence(&vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED), None).expect("Create fence failed.");
+            let command_buffer_reuse_fence = device.create_fence(&vk::FenceCreateInfo::default().flags(vk::FenceCreateFlags::SIGNALED), None).expect("Create fence failed.");
             device.reset_fences(&[command_buffer_reuse_fence]).expect("Reset fences failed.");
 
             device.reset_command_buffer(command_buffer, vk::CommandBufferResetFlags::RELEASE_RESOURCES).expect("Reset command buffer failed.");
             device
-                .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT))
+                .begin_command_buffer(command_buffer, &vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT))
                 .expect("Begin commandbuffer");
 
             // device.cmd_pipeline_barrier( // TODO: we should have a barrier that transitions the attachments to the correct states, specified by the initial_state of the renderpass attachment descriptions, for all that are not UNDEFINED
@@ -518,20 +529,20 @@ where Vertex: Copy
             //     &[],
             //     &[],
             //     &[
-            //         vk::ImageMemoryBarrier::builder()
+            //         vk::ImageMemoryBarrier::default()
             //             .image(depth_image)
             //             .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
             //             .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
             //             .old_layout(vk::ImageLayout::UNDEFINED)
-            //             .subresource_range(vk::ImageSubresourceRange::builder().aspect_mask(vk::ImageAspectFlags::DEPTH).layer_count(1).level_count(1).build())
-            //             .build(),
-            //         vk::ImageMemoryBarrier::builder()
+            //             .subresource_range(vk::ImageSubresourceRange::default().aspect_mask(vk::ImageAspectFlags::DEPTH).layer_count(1).level_count(1))
+            //             ,
+            //         vk::ImageMemoryBarrier::default()
             //             .image(shadow_map_image)
             //             .dst_access_mask(vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ | vk::AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE)
             //             .new_layout(vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
             //             .old_layout(vk::ImageLayout::UNDEFINED)
-            //             .subresource_range(vk::ImageSubresourceRange::builder().aspect_mask(vk::ImageAspectFlags::DEPTH).layer_count(1).level_count(1).build())
-            //             .build(),
+            //             .subresource_range(vk::ImageSubresourceRange::default().aspect_mask(vk::ImageAspectFlags::DEPTH).layer_count(1).level_count(1))
+            //             ,
             //     ],
             // );
 
@@ -541,7 +552,7 @@ where Vertex: Copy
             device
                 .queue_submit(
                     present_queue,
-                    &[vk::SubmitInfo::builder().wait_semaphores(&[]).wait_dst_stage_mask(&[]).command_buffers(&vec![command_buffer]).signal_semaphores(&[]).build()],
+                    &[vk::SubmitInfo::default().wait_semaphores(&[]).wait_dst_stage_mask(&[]).command_buffers(&vec![command_buffer]).signal_semaphores(&[])],
                     command_buffer_reuse_fence,
                 )
                 .expect("queue submit failed.");
@@ -556,7 +567,7 @@ where Vertex: Copy
             //# Descriptors set for per frame DrawUniform
             let draw_descriptor_set_layout = device
                 .create_descriptor_set_layout(
-                    &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[*vk::DescriptorSetLayoutBinding::builder()
+                    &vk::DescriptorSetLayoutCreateInfo::default().bindings(&[vk::DescriptorSetLayoutBinding::default()
                         .binding(0)
                         .descriptor_type(DescriptorType::UNIFORM_BUFFER)
                         .descriptor_count(1)
@@ -567,12 +578,12 @@ where Vertex: Copy
 
             let draw_descriptor_set = device
                 .allocate_descriptor_sets(
-                    &vk::DescriptorSetAllocateInfo::builder()
+                    &vk::DescriptorSetAllocateInfo::default()
                         .descriptor_pool(
                             device
                                 .create_descriptor_pool(
-                                    &vk::DescriptorPoolCreateInfo::builder()
-                                        .pool_sizes(&[*vk::DescriptorPoolSize::builder().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(1 as u32)])
+                                    &vk::DescriptorPoolCreateInfo::default()
+                                        .pool_sizes(&[vk::DescriptorPoolSize::default().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(1 as u32)])
                                         .max_sets(1 as u32),
                                     None,
                                 )
@@ -659,7 +670,7 @@ where Vertex: Copy
                 let staging_buffer = self
                     .device
                     .create_buffer(
-                        &vk::BufferCreateInfo::builder().size(size).usage(vk::BufferUsageFlags::TRANSFER_SRC).sharing_mode(vk::SharingMode::EXCLUSIVE),
+                        &vk::BufferCreateInfo::default().size(size).usage(vk::BufferUsageFlags::TRANSFER_SRC).sharing_mode(vk::SharingMode::EXCLUSIVE),
                         None,
                     )
                     .expect("Create staging buffer failed.");
@@ -669,7 +680,7 @@ where Vertex: Copy
                 let staging_memory = self
                     .device
                     .allocate_memory(
-                        &vk::MemoryAllocateInfo::builder().allocation_size(mem_reqs.size).memory_type_index(
+                        &vk::MemoryAllocateInfo::default().allocation_size(mem_reqs.size).memory_type_index(
                             (0..mem_props.memory_type_count)
                                 .find(|&i| {
                                     (mem_reqs.memory_type_bits & (1 << i)) != 0
@@ -690,10 +701,10 @@ where Vertex: Copy
                 self.device.reset_fences(&[self.command_buffer_reuse_fence]).expect("Reset fences failed.");
                 self.device.reset_command_buffer(self.command_buffer, vk::CommandBufferResetFlags::RELEASE_RESOURCES).expect("Reset command buffer failed.");
 
-                let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+                let command_buffer_begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
                 self.device.begin_command_buffer(self.command_buffer, &command_buffer_begin_info).expect("Begin commandbuffer");
 
-                let subresource_range = vk::ImageSubresourceRange::builder().aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1).level_count(1).build();
+                let subresource_range = vk::ImageSubresourceRange::default().aspect_mask(vk::ImageAspectFlags::COLOR).layer_count(1).level_count(1);
 
                 self.device.cmd_pipeline_barrier(
                     self.command_buffer,
@@ -702,14 +713,13 @@ where Vertex: Copy
                     vk::DependencyFlags::empty(),
                     &[],
                     &[],
-                    &[vk::ImageMemoryBarrier::builder()
+                    &[vk::ImageMemoryBarrier::default()
                         .image(img_info.image)
                         .old_layout(vk::ImageLayout::UNDEFINED)
                         .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                         .src_access_mask(vk::AccessFlags::empty())
                         .dst_access_mask(vk::AccessFlags::TRANSFER_WRITE)
-                        .subresource_range(subresource_range)
-                        .build()],
+                        .subresource_range(subresource_range)],
                 );
 
                 let (width, height) = match img_info.create_info.size {
@@ -739,14 +749,13 @@ where Vertex: Copy
                     vk::DependencyFlags::empty(),
                     &[],
                     &[],
-                    &[vk::ImageMemoryBarrier::builder()
+                    &[vk::ImageMemoryBarrier::default()
                         .image(img_info.image)
                         .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
                         .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                         .src_access_mask(vk::AccessFlags::TRANSFER_WRITE)
                         .dst_access_mask(vk::AccessFlags::SHADER_READ)
-                        .subresource_range(subresource_range)
-                        .build()],
+                        .subresource_range(subresource_range)],
                 );
 
                 self.device.end_command_buffer(self.command_buffer).expect("End commandbuffer");
@@ -754,7 +763,7 @@ where Vertex: Copy
                 self.device
                     .queue_submit(
                         self.present_queue,
-                        &[vk::SubmitInfo::builder().wait_semaphores(&[]).wait_dst_stage_mask(&[]).command_buffers(&vec![self.command_buffer]).signal_semaphores(&[]).build()],
+                        &[vk::SubmitInfo::default().wait_semaphores(&[]).wait_dst_stage_mask(&[]).command_buffers(&vec![self.command_buffer]).signal_semaphores(&[])],
                         self.command_buffer_reuse_fence,
                     )
                     .expect("queue submit failed.");
@@ -774,7 +783,7 @@ where Vertex: Copy
         self.device.reset_fences(&[self.command_buffer_reuse_fence]).expect("Reset fences failed.");
         self.device.reset_command_buffer(self.command_buffer, vk::CommandBufferResetFlags::RELEASE_RESOURCES).expect("Reset command buffer failed.");
 
-        let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+        let command_buffer_begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
         self.device.begin_command_buffer(self.command_buffer, &command_buffer_begin_info).expect("Begin commandbuffer");
 
         match image {
@@ -787,13 +796,12 @@ where Vertex: Copy
                     vk::DependencyFlags::empty(),
                     &[],
                     &[],
-                    &[vk::ImageMemoryBarrier::builder()
+                    &[vk::ImageMemoryBarrier::default()
                         .image(img_info.image)
                         .dst_access_mask(dst_access_mask)
                         .new_layout(layout)
                         .old_layout(vk::ImageLayout::UNDEFINED)
-                        .subresource_range(vk::ImageSubresourceRange::builder().aspect_mask(image_aspect_mask).layer_count(1).level_count(1).build())
-                        .build()],
+                        .subresource_range(vk::ImageSubresourceRange::default().aspect_mask(image_aspect_mask).layer_count(1).level_count(1))],
                 );
             },
             _ => {
@@ -806,7 +814,7 @@ where Vertex: Copy
         self.device
             .queue_submit(
                 self.present_queue,
-                &[vk::SubmitInfo::builder().wait_semaphores(&[]).wait_dst_stage_mask(&[]).command_buffers(&vec![self.command_buffer]).signal_semaphores(&[]).build()],
+                &[vk::SubmitInfo::default().wait_semaphores(&[]).wait_dst_stage_mask(&[]).command_buffers(&vec![self.command_buffer]).signal_semaphores(&[])],
                 self.command_buffer_reuse_fence,
             )
             .expect("queue submit failed.");
@@ -824,10 +832,10 @@ where Vertex: Copy
         let image = self
             .device
             .create_image(
-                &vk::ImageCreateInfo::builder()
+                &vk::ImageCreateInfo::default()
                     .image_type(vk::ImageType::TYPE_2D)
                     .format(create_info.format)
-                    .extent(*vk::Extent3D::builder().width(width).height(height).depth(1))
+                    .extent(vk::Extent3D::default().width(width).height(height).depth(1))
                     .mip_levels(1)
                     .array_layers(1)
                     .samples(vk::SampleCountFlags::TYPE_1)
@@ -843,7 +851,7 @@ where Vertex: Copy
         let memory = self
             .device
             .allocate_memory(
-                &vk::MemoryAllocateInfo::builder().allocation_size(image_memory_req.size).memory_type_index(
+                &vk::MemoryAllocateInfo::default().allocation_size(image_memory_req.size).memory_type_index(
                     self.device_memory_properties.memory_types[..self.device_memory_properties.memory_type_count as _]
                         .iter()
                         .enumerate()
@@ -860,8 +868,8 @@ where Vertex: Copy
         let view = self
             .device
             .create_image_view(
-                &vk::ImageViewCreateInfo::builder()
-                    .subresource_range(vk::ImageSubresourceRange::builder().aspect_mask(create_info.image_aspect_mask).level_count(1).layer_count(1).build()) // TODO: For now this has only been used with depth images, figure out wtf an aspect_mask is, and what that needs to be for other images
+                &vk::ImageViewCreateInfo::default()
+                    .subresource_range(vk::ImageSubresourceRange::default().aspect_mask(create_info.image_aspect_mask).level_count(1).layer_count(1)) // TODO: For now this has only been used with depth images, figure out wtf an aspect_mask is, and what that needs to be for other images
                     .image(image)
                     .format(create_info.format)
                     .view_type(vk::ImageViewType::TYPE_2D),
@@ -883,9 +891,9 @@ where Vertex: Copy
         name: String,
         vertex_shader_bytes: &[u8],
         fragment_shader_bytes: &[u8],
-        rasterization_state: vk::PipelineRasterizationStateCreateInfo,
-        depth_stencil_state: PipelineDepthStencilStateCreateInfo,
-        color_blend_state: PipelineColorBlendStateCreateInfo,
+        rasterization_state: PipelineRasterizationStateCreateInfo<'a>,
+        depth_stencil_state: PipelineDepthStencilStateCreateInfo<'a>,
+        color_blend_state: PipelineColorBlendStateCreateInfo<'a>,
         vertex_attribute_descriptions: [VertexInputAttributeDescription; N_VERTEX_ATTRIBUTE_DESCRIPTIONS],
         images: Vec<RedHotStageImage>,
         attachments: &[AttachmentDescription],
@@ -897,7 +905,7 @@ where Vertex: Copy
         let render_pass = self
             .device
             .create_render_pass(
-                &vk::RenderPassCreateInfo::builder().attachments(attachments).subpasses(subpass_description).dependencies(depedencies),
+                &vk::RenderPassCreateInfo::default().attachments(attachments).subpasses(subpass_description).dependencies(depedencies),
                 None,
             )
             .unwrap();
@@ -924,7 +932,7 @@ where Vertex: Copy
         let object_descriptor_set_layout = self
             .device
             .create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::builder().bindings(&[*vk::DescriptorSetLayoutBinding::builder()
+                &vk::DescriptorSetLayoutCreateInfo::default().bindings(&[vk::DescriptorSetLayoutBinding::default()
                     .binding(0)
                     .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
                     .descriptor_count(1)
@@ -935,12 +943,12 @@ where Vertex: Copy
         let object_descriptor_set = self
             .device
             .allocate_descriptor_sets(
-                &vk::DescriptorSetAllocateInfo::builder()
+                &vk::DescriptorSetAllocateInfo::default()
                     .descriptor_pool(
                         self.device
                             .create_descriptor_pool(
-                                &vk::DescriptorPoolCreateInfo::builder()
-                                    .pool_sizes(&[*vk::DescriptorPoolSize::builder().ty(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC).descriptor_count(1 as u32)])
+                                &vk::DescriptorPoolCreateInfo::default()
+                                    .pool_sizes(&[vk::DescriptorPoolSize::default().ty(vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC).descriptor_count(1 as u32)])
                                     .max_sets(1 as u32),
                                 None,
                             )
@@ -952,15 +960,15 @@ where Vertex: Copy
         let stage_descriptor_set_layout = self
             .device
             .create_descriptor_set_layout(
-                &vk::DescriptorSetLayoutCreateInfo::builder().bindings(
-                    &[*vk::DescriptorSetLayoutBinding::builder()
+                &vk::DescriptorSetLayoutCreateInfo::default().bindings(
+                    &[vk::DescriptorSetLayoutBinding::default()
                         .binding(0)
                         .descriptor_type(DescriptorType::UNIFORM_BUFFER)
                         .descriptor_count(1)
                         .stage_flags(ShaderStageFlags::VERTEX)]
                     .into_iter()
                     .chain((0..img_textures.len()).map(|i| {
-                        *vk::DescriptorSetLayoutBinding::builder()
+                        vk::DescriptorSetLayoutBinding::default()
                             .binding(1 + i as u32)
                             .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                             .descriptor_count(1) // TODO: maybe drop the loop in favor of just having a higher descriptor count? Would maybe make shaders less nice?
@@ -972,36 +980,36 @@ where Vertex: Copy
             )
             .unwrap();
 
-        let mut pool_sizes = vec![*vk::DescriptorPoolSize::builder().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(1)];
+        let mut pool_sizes = vec![vk::DescriptorPoolSize::default().ty(vk::DescriptorType::UNIFORM_BUFFER).descriptor_count(1)];
         if img_textures.len() > 0 {
-            pool_sizes.push(*vk::DescriptorPoolSize::builder().ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER).descriptor_count(img_textures.len() as u32));
+            pool_sizes.push(vk::DescriptorPoolSize::default().ty(vk::DescriptorType::COMBINED_IMAGE_SAMPLER).descriptor_count(img_textures.len() as u32));
         }
         let stage_descriptor_set = self
             .device
             .allocate_descriptor_sets(
-                &vk::DescriptorSetAllocateInfo::builder()
-                    .descriptor_pool(self.device.create_descriptor_pool(&vk::DescriptorPoolCreateInfo::builder().pool_sizes(&pool_sizes).max_sets(1 as u32), None).unwrap())
+                &vk::DescriptorSetAllocateInfo::default()
+                    .descriptor_pool(self.device.create_descriptor_pool(&vk::DescriptorPoolCreateInfo::default().pool_sizes(&pool_sizes).max_sets(1 as u32), None).unwrap())
                     .set_layouts(&[stage_descriptor_set_layout]),
             )
             .unwrap()[0];
         let pipeline_layout = self
             .device
             .create_pipeline_layout(
-                &vk::PipelineLayoutCreateInfo::builder().set_layouts(&[self.draw_descriptor_set_layout, stage_descriptor_set_layout, object_descriptor_set_layout]),
+                &vk::PipelineLayoutCreateInfo::default().set_layouts(&[self.draw_descriptor_set_layout, stage_descriptor_set_layout, object_descriptor_set_layout]),
                 None,
             )
             .unwrap();
         let vertex_shader_module = self
             .device
             .create_shader_module(
-                &vk::ShaderModuleCreateInfo::builder().code(&read_spv(&mut Cursor::new(vertex_shader_bytes)).expect("Failed to read vertex shader spv file")), //TODO: fix
+                &vk::ShaderModuleCreateInfo::default().code(&read_spv(&mut Cursor::new(vertex_shader_bytes)).expect("Failed to read vertex shader spv file")), //TODO: fix
                 None,
             )
             .expect("Vertex shader module error");
         let fragment_shader_module = self
             .device
             .create_shader_module(
-                &vk::ShaderModuleCreateInfo::builder().code(&read_spv(&mut Cursor::new(fragment_shader_bytes)).expect("Failed to read fragment shader spv file")), //TODO: fix
+                &vk::ShaderModuleCreateInfo::default().code(&read_spv(&mut Cursor::new(fragment_shader_bytes)).expect("Failed to read fragment shader spv file")), //TODO: fix
                 None,
             )
             .expect("Fragment shader module error");
@@ -1014,12 +1022,12 @@ where Vertex: Copy
                 // TODO: Store the sampler for reuse on OTHER textures
                 let sampler = self.device.create_sampler(sampler_info, None).unwrap();
                 self.device.update_descriptor_sets(
-                    &[*vk::WriteDescriptorSet::builder()
+                    &[vk::WriteDescriptorSet::default()
                         .dst_set(stage_descriptor_set)
                         .dst_binding(1 + i as u32)
                         .dst_array_element(0)
                         .descriptor_type(DescriptorType::COMBINED_IMAGE_SAMPLER)
-                        .image_info(&[*vk::DescriptorImageInfo::builder()
+                        .image_info(&[vk::DescriptorImageInfo::default()
                             .sampler(sampler)
                             .image_view(match img {
                                 RedHotStageImage::Image(imagei) => self.get_image(*imagei).view,
@@ -1188,7 +1196,7 @@ where Vertex: Copy
             let index_buffer = self
                 .device
                 .create_buffer(
-                    &vk::BufferCreateInfo::builder()
+                    &vk::BufferCreateInfo::default()
                         .size((std::mem::size_of::<Index>() * self.registered_meshes.iter().fold(0, |sum, (mesh, _, _)| sum + mesh.indices.len())) as u64)
                         .usage(vk::BufferUsageFlags::INDEX_BUFFER)
                         .sharing_mode(vk::SharingMode::EXCLUSIVE),
@@ -1309,7 +1317,7 @@ where Vertex: Copy
             self.device.reset_fences(&[self.command_buffer_reuse_fence]).expect("Reset fences failed.");
             self.device.reset_command_buffer(self.command_buffer, vk::CommandBufferResetFlags::RELEASE_RESOURCES).expect("Reset command buffer failed.");
 
-            let command_buffer_begin_info = vk::CommandBufferBeginInfo::builder().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+            let command_buffer_begin_info = vk::CommandBufferBeginInfo::default().flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
             self.device.begin_command_buffer(self.command_buffer, &command_buffer_begin_info).expect("Begin commandbuffer");
 
             if self.should_regenerate_vertex_buffer {
@@ -1374,12 +1382,12 @@ where Vertex: Copy
             self.device.bind_buffer_memory(draw_uniform_buffer, draw_uniform_buffer_memory, 0).unwrap();
 
             self.device.update_descriptor_sets(
-                &[*vk::WriteDescriptorSet::builder()
+                &[vk::WriteDescriptorSet::default()
                     .dst_set(self.draw_descriptor_set)
                     .dst_binding(0) //. We placed the draw uniform at layout binding = 0
                     .dst_array_element(0) //. Our uniform is just a single element, not an array, so it's at index 0
                     .descriptor_type(DescriptorType::UNIFORM_BUFFER)
-                    .buffer_info(&[*vk::DescriptorBufferInfo::builder().buffer(draw_uniform_buffer).offset(0).range(mem::size_of::<DU>() as u64)])],
+                    .buffer_info(&[vk::DescriptorBufferInfo::default().buffer(draw_uniform_buffer).offset(0).range(mem::size_of::<DU>() as u64)])],
                 &[],
             );
 
@@ -1397,15 +1405,15 @@ where Vertex: Copy
         let current_render = self.current_render.as_mut().expect("Call render_begin before calling render_stage");
         let stage_framebuffer = stage.get_framebuffer(current_render.present_index);
         // println!("Render stage {}, with size ({}, {})", stage.name, stage_framebuffer.width, stage_framebuffer.height);
-        let scissors = [*Rect2D::builder().extent(*vk::Extent2D::builder().width(stage_framebuffer.width).height(stage_framebuffer.height))];
+        let scissors = [Rect2D::default().extent(vk::Extent2D::default().width(stage_framebuffer.width).height(stage_framebuffer.height))];
         let viewports = [vk::Viewport { x: 0.0, y: 0.0, width: stage_framebuffer.width as f32, height: stage_framebuffer.height as f32, min_depth: 0.0, max_depth: 1.0 }];
 
         let clear_values = stage.clear_values.clone(); // TODO: figure out how to avoid this
 
-        let render_pass_begin_info = vk::RenderPassBeginInfo::builder()
+        let render_pass_begin_info = vk::RenderPassBeginInfo::default()
             .render_pass(stage.render_pass)
             .framebuffer(stage_framebuffer.framebuffer)
-            .render_area(*Rect2D::builder().extent(*vk::Extent2D::builder().width(stage_framebuffer.width).height(stage_framebuffer.height)))
+            .render_area(Rect2D::default().extent(vk::Extent2D::default().width(stage_framebuffer.width).height(stage_framebuffer.height)))
             .clear_values(&clear_values);
 
         unsafe {
@@ -1446,12 +1454,12 @@ where Vertex: Copy
             self.device.bind_buffer_memory(stage_uniform_buffer, stage_uniform_buffer_memory, 0).unwrap();
 
             self.device.update_descriptor_sets(
-                &[*vk::WriteDescriptorSet::builder()
+                &[vk::WriteDescriptorSet::default()
                     .dst_set(stage.stage_descriptor_set)
                     .dst_binding(0)
                     .dst_array_element(0)
                     .descriptor_type(DescriptorType::UNIFORM_BUFFER)
-                    .buffer_info(&[*vk::DescriptorBufferInfo::builder().buffer(stage_uniform_buffer).offset(0).range(mem::size_of::<SU>() as u64)])],
+                    .buffer_info(&[vk::DescriptorBufferInfo::default().buffer(stage_uniform_buffer).offset(0).range(mem::size_of::<SU>() as u64)])],
                 &[],
             );
 
@@ -1503,12 +1511,12 @@ where Vertex: Copy
             self.device.bind_buffer_memory(object_uniform_buffer, object_uniform_buffer_memory, 0).unwrap();
 
             self.device.update_descriptor_sets(
-                &[*vk::WriteDescriptorSet::builder()
+                &[vk::WriteDescriptorSet::default()
                     .dst_set(stage.object_descriptor_set)
                     .dst_binding(0)
                     .dst_array_element(0)
                     .descriptor_type(DescriptorType::UNIFORM_BUFFER_DYNAMIC)
-                    .buffer_info(&[*vk::DescriptorBufferInfo::builder().buffer(object_uniform_buffer).offset(0).range(mem::size_of::<OU>() as u64)])],
+                    .buffer_info(&[vk::DescriptorBufferInfo::default().buffer(object_uniform_buffer).offset(0).range(mem::size_of::<OU>() as u64)])],
                 &[],
             );
 
@@ -1563,12 +1571,11 @@ where Vertex: Copy
             self.device
                 .queue_submit(
                     self.present_queue,
-                    &[vk::SubmitInfo::builder()
+                    &[vk::SubmitInfo::default()
                         .wait_semaphores(&[self.present_complete_semaphore])
                         .wait_dst_stage_mask(&[vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT])
                         .command_buffers(&command_buffers)
-                        .signal_semaphores(&[self.rendering_complete_semaphores[current_render.present_index as usize]])
-                        .build()],
+                        .signal_semaphores(&[self.rendering_complete_semaphores[current_render.present_index as usize]])],
                     self.command_buffer_reuse_fence,
                 )
                 .expect("queue submit failed.");
@@ -1576,7 +1583,7 @@ where Vertex: Copy
             self.swapchain_loader
                 .queue_present(
                     self.present_queue,
-                    &vk::PresentInfoKHR::builder()
+                    &vk::PresentInfoKHR::default()
                         .wait_semaphores(&[self.rendering_complete_semaphores[current_render.present_index as usize]])
                         .swapchains(&[self.swapchain])
                         .image_indices(&[current_render.present_index]),
