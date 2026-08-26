@@ -435,6 +435,7 @@ fn main() {
                     format: renderer.swapchain_image_format,
                     samples: vk::SampleCountFlags::TYPE_1,
                     load_op: vk::AttachmentLoadOp::LOAD,
+                    initial_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                     store_op: vk::AttachmentStoreOp::STORE,
                     final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                     ..Default::default()
@@ -471,7 +472,7 @@ fn main() {
         let texture_atlas = renderer.register_image(RedHotImageCreateInfo {
             size: ImageSize::Fixed(TEXTURE_ATLAS_WIDTH, TEXTURE_ATLAS_HEIGHT),
             format: vk::Format::R8G8B8A8_UNORM,
-            usage: vk::ImageUsageFlags::SAMPLED,
+            usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
             memory_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
             image_aspect_mask: vk::ImageAspectFlags::COLOR,
         });
@@ -583,6 +584,7 @@ fn main() {
                 format: renderer.swapchain_image_format,
                 samples: vk::SampleCountFlags::TYPE_1,
                 load_op: vk::AttachmentLoadOp::LOAD,
+                initial_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                 store_op: vk::AttachmentStoreOp::STORE,
                 final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
                 ..Default::default()
@@ -733,7 +735,8 @@ fn main() {
                         cam_pitch += mouse_y as f32 / 40.0;
                     }
                 },
-                Event::WindowEvent { event: WindowEvent::Resized(size), .. } => {
+                Event::WindowEvent { event: WindowEvent::Resized(_physical_size), .. } => {
+                    let size = window.inner_size(); //. I think this is what we actually care about?? The other one did a weird "physical" resize that doesn't appear to do anything, but fucks my swapchain
                     if window_width != size.width || window_height != size.height {
                         window_width = size.width;
                         window_height = size.height;
