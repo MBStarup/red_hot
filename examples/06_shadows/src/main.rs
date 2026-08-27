@@ -24,19 +24,14 @@ use winit::{
 };
 
 fn texture_atlas_letter_coords(c: char) -> (i32, i32) {
-    let lc = c.to_ascii_lowercase();
-    const ROW_1: &str = "abcdefghijklmnopqrst";
-    const ROW_2: &str = "uvxyz1234567890+-?=!";
-    const ROW_3: &str = ".:,; {[]}w";
-    if let Some(index) = ROW_1.chars().position(|x| x == lc) {
-        (index as i32, 0)
-    } else if let Some(index) = ROW_2.chars().position(|x| x == lc) {
-        (index as i32, 1)
-    } else if let Some(index) = ROW_3.chars().position(|x| x == lc) {
-        (index as i32, 2)
-    } else {
-        panic!("Unsupported character: {c:?}");
-    }
+    const ROWS: &[&str] = &["abcdefghijklmnopqrst", "uvxyz1234567890+-?=!", ".:,; {[]}w*'"];
+
+    let c = c.to_ascii_lowercase();
+
+    ROWS.iter()
+        .enumerate()
+        .find_map(|(row, chars)| chars.chars().position(|x| x == c).map(|col| (col as i32, row as i32)))
+        .unwrap_or_else(|| panic!("Unsupported character: {c:?}"))
 }
 
 fn main() {
@@ -94,7 +89,7 @@ fn main() {
         struct UiObjectUniform {
             model_mat: Mat4x4<f32>,
             color: Vec3<f32>,
-            _pad1: f32,
+            use_color: u32,
             texture_offset: [f32; 2],
             texture_area: [f32; 2],
         }
@@ -625,10 +620,11 @@ fn main() {
         let mut should_close = false;
         let mut a = 1.0;
         let mut b = 1.0;
-        let mut c = 1.0;
+        let mut c = 0.05;
         let light_proj_matrix = perspective_matrix(TAU / 4.0, 0.1, 200.0);
         let mut typing = false;
         let mut text_input = String::new();
+        let mut debug = false;
 
         let mut focused = false;
 
@@ -651,9 +647,9 @@ fn main() {
                     rotation_data[i].0.z = -rotation_data[i].0.z;
                 }
             }
-            light_box.transform.position = Vec3 { x: 50.0 * f32::sin(t * 1.0), y: 50.0 * f32::tan(t * 1.0), z: 50.0 * f32::cos(t * 1.0) };
-            light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 1.0, z: 0.0 }.normalize(), 0.01 * dt) * light_box.transform.rotation;
-            light_box2.transform.position = Vec3 { x: 50.0 * f32::sin(PI + t * 1.0), y: 50.0 * f32::tan(PI + t * 1.0), z: 50.0 * f32::cos(PI + t * 1.0) };
+            light_box.transform.position = Vec3 { x: 50.0 * f32::sin(t * 1.0), y: 50.0, z: 50.0 * f32::cos(t * 1.0) };
+            light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 1.0 }.normalize(), 0.01 * dt) * light_box.transform.rotation;
+            light_box2.transform.position = Vec3 { x: 50.0 * f32::sin(PI + t * 1.0), y: 50.0 * f32::sin(PI + t * 1.0), z: 50.0 * f32::cos(PI + t * 1.0) };
             light_box2.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 1.0 }.normalize(), -0.1 * dt) * light_box2.transform.rotation;
 
             let light_dir = Vec3::forward().rotate(light_box.transform.rotation);
@@ -707,8 +703,9 @@ fn main() {
                                 KeyCode::KeyI => a += 0.1,
                                 KeyCode::KeyJ => b -= 0.1,
                                 KeyCode::KeyK => b += 0.1,
-                                KeyCode::KeyN => c -= 0.1,
-                                KeyCode::KeyM => c += 0.1,
+                                KeyCode::KeyN => c = 0.001 + (c - 0.01) % 1.001,
+                                KeyCode::KeyM => c = 0.001 + (c + 0.01) % 1.001,
+                                KeyCode::KeyZ => debug = !debug,
                                 _ => (),
                             }
                         }
@@ -774,61 +771,77 @@ fn main() {
                         ])
                         .collect(),
                 );
-                renderer.render_stage(
-                    debug_stage,
-                    RenderStageUniform {
-                        view_mat: camera_transform.get_inverse_matrix(),
-                        proj_mat,
-                        light_view_proj_mat: Mat4x4::<f32>::zero(),  //. Unused
-                        light_view_proj_mat2: Mat4x4::<f32>::zero(), //. Unused
-                        light_dir: [0.0, 0.0, 0.0, 0.0],             //. Unused
-                        light_dir2: [0.0, 0.0, 0.0, 0.0],            //. Unused
-                    },
-                    objects.iter().map(|x| x.mesh).chain([room_box.mesh, light_box.mesh, light_box2.mesh]).collect(),
-                    objects
-                        .iter()
-                        .map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 })
-                        .chain([
-                            ObjectUniform { model_mat: room_box.transform.get_matrix(), is_light: 0 },
-                            ObjectUniform { model_mat: light_box.transform.get_matrix(), is_light: 1 },
-                            ObjectUniform { model_mat: light_box2.transform.get_matrix(), is_light: 1 },
-                        ])
-                        .collect(),
-                );
+                if debug {
+                    renderer.render_stage(
+                        debug_stage,
+                        RenderStageUniform {
+                            view_mat: camera_transform.get_inverse_matrix(),
+                            proj_mat,
+                            light_view_proj_mat: Mat4x4::<f32>::zero(),  //. Unused
+                            light_view_proj_mat2: Mat4x4::<f32>::zero(), //. Unused
+                            light_dir: [0.0, 0.0, 0.0, 0.0],             //. Unused
+                            light_dir2: [0.0, 0.0, 0.0, 0.0],            //. Unused
+                        },
+                        objects.iter().map(|x| x.mesh).chain([room_box.mesh, light_box.mesh, light_box2.mesh]).collect(),
+                        objects
+                            .iter()
+                            .map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 })
+                            .chain([
+                                ObjectUniform { model_mat: room_box.transform.get_matrix(), is_light: 0 },
+                                ObjectUniform { model_mat: light_box.transform.get_matrix(), is_light: 1 },
+                                ObjectUniform { model_mat: light_box2.transform.get_matrix(), is_light: 1 },
+                            ])
+                            .collect(),
+                    );
+                }
 
-                let objects: Vec<UiObjectUniform> = if text_input.is_empty() { "..." } else { &text_input }
+                let objects: Vec<UiObjectUniform> = if text_input.is_empty() { "*ENTER*" } else { &text_input }
                     .chars()
                     .enumerate()
                     .map(|(i, char)| {
                         let (atlas_x, atlas_y) = texture_atlas_letter_coords(char);
+                        let scale = c;
+                        let row_count = (1.0 / scale) as usize;
+                        let ratio = window_width as f32 / window_height as f32;
 
                         UiObjectUniform {
                             model_mat: Transform {
-                                position: Vec3 {
-                                    x: -1.0 + (0.1 * (window_height as f32 / window_width as f32)) + (i as f32 * (0.1 * (window_height as f32 / window_width as f32)) * 2.0),
-                                    y: 0.0,
-                                    z: 0.0,
-                                },
+                                position: Vec3 { x: -1.0 + scale + (i % row_count) as f32 * scale * 2.0, y: -1.0 + scale * ratio + ((i / row_count) as f32 * scale * ratio * 2.0), z: 0.0 },
                                 rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU / 4.0),
-                                scale: Vec3 { x: 0.1 * (window_height as f32 / window_width as f32), y: 0.1, z: 0.1 },
+                                scale: Vec3 { x: scale, y: scale, z: scale * ratio },
                             }
                             .get_matrix(),
 
-                            color: Vec3 { x: 1.0, y: 1.0, z: 1.0 },
+                            color: Vec3 { x: 0.3, y: 0.2, z: 0.9 },
 
-                            _pad1: 0.0,
+                            use_color: if "abcdefghijklmnopqrstuvwxyz0123456789+-?=!.:,; ".contains(char.to_ascii_lowercase()) {
+                                1
+                            } else {
+                                0
+                            },
 
                             texture_offset: [
                                 (1.0 + atlas_x as f32 * 99.0) / texture_atlas_bmp.width as f32,
-                                (1.0 + atlas_y as f32 * 99.0) / texture_atlas_bmp.height as f32,
+                                (1.0 + atlas_y as f32 * 98.5) / texture_atlas_bmp.height as f32,
                             ],
 
-                            texture_area: [97.0 / texture_atlas_bmp.width as f32, 97.0 / texture_atlas_bmp.height as f32],
+                            texture_area: [98.0 / texture_atlas_bmp.width as f32, 98.0 / texture_atlas_bmp.height as f32],
                         }
                     })
                     .collect();
 
-                renderer.render_stage(ui_stage, DrawUniform { _dummy: 0.0 }, vec![plane_meshi; objects.len()], objects);
+                renderer.render_stage(
+                    ui_stage,
+                    DrawUniform {
+                        _dummy: if typing {
+                            f32::from_be_bytes([0xFF, 0xFF, 0xFF, 0xFF])
+                        } else {
+                            f32::from_be_bytes([0x00, 0x00, 0x00, 0x00])
+                        },
+                    },
+                    vec![plane_meshi; objects.len()],
+                    objects,
+                );
 
                 renderer.render_commit();
             }

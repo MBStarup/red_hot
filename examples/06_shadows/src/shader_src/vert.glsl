@@ -50,8 +50,8 @@ void main() {
     light_dir2 = stage_uniform.light_dir2;
     is_light = object_uniform.is_light;
     // https://stackoverflow.com/a/14197892
-    brightness = max(0.1, dot(-stage_uniform.light_dir.xyz, normalize(normalize(in_normal.xyz) * inverse(transpose(mat3(object_uniform.model))))));
-    brightness2 = max(0.1, dot(-stage_uniform.light_dir2.xyz, normalize(normalize(in_normal.xyz) * inverse(transpose(mat3(object_uniform.model))))));
+    brightness = dot(-stage_uniform.light_dir.xyz, normalize(normalize(in_normal.xyz) * inverse(transpose(mat3(object_uniform.model)))));
+    brightness2 = dot(-stage_uniform.light_dir2.xyz, normalize(normalize(in_normal.xyz) * inverse(transpose(mat3(object_uniform.model)))));
     color = in_color;
     // color = in_color * ((brightness + brightness2)/2);
 }

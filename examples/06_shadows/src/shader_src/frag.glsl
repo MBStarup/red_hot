@@ -44,7 +44,8 @@ void main() {
     vec3 proj_coords = light_space_pos.xyz / light_space_pos.w;
     proj_coords.xy = proj_coords.xy * 0.5 + 0.5;
 
-    bool in_light = false;
+    float lights = 2.0;
+    float in_light = 0.0;
     float shadow = 0.0;
     if(    proj_coords.x >= 0.0 && proj_coords.x <= 1.0
         && proj_coords.y >= 0.0 && proj_coords.y <= 1.0 
@@ -56,7 +57,7 @@ void main() {
             vec3(proj_coords.xy, proj_coords.z + bias1),
             PCF_RADIUS
         );
-        in_light = true;
+        in_light += shadow;
     }
 
     // # Shadow 2
@@ -74,20 +75,16 @@ void main() {
             vec3(proj_coords2.xy, proj_coords2.z + bias),
             PCF_RADIUS
         );
-        in_light = true;
+        in_light += shadow2;
     }
 
-    float ambient = 0.5;
+    float ambient = 0.2;
+    float b = ambient + ((1.0 - ambient)/lights) * in_light;
 
-    color = vec4(shadow, shadow2, 0.0, 1.0);
-    float b = max(ambient, ((0.1 * (shadow + shadow2)/2) + (0.9 * max(shadow, shadow2)))) * max(brightness, brightness2);
-    vec4 tint = mix(vec4(1.0, 0.0, 0.0, 1.0), vec4(0.5, 0.5, 1.0, 1.0), b);
-    color = mix(in_color, tint, 0.3) * b;
-    // if (in_light) {
-        // color = vec4(0.0, 100000 * bias1, -100000 * bias1, 1.0);
-        // color = in_color * (shadow) * 0.8;
-    // }
-    // else {
-        // color = vec4(1.0, 1.0, 1.0, 1.0);
-    // }
+    // color = vec4(shadow, shadow2, 0.0, 1.0);
+    // float b = ((0.1 * (shadow + shadow2)/2) + (0.9 * max(shadow, shadow2))) * max(ambient, max(brightness, brightness2));
+    // if (!in_light) { b = ambient; }
+    // vec4 tint = mix(vec4(1.0, 0.0, 0.0, 1.0), vec4(0.5, 0.5, 1.0, 1.0), b);
+    // color = mix(in_color, tint, 0.3) * b;
+    color = in_color * b;
 }

@@ -7,13 +7,13 @@ layout(set = 0, binding = 0) uniform DrawUniform {
 } draw_uniform;
 
 layout(set = 1, binding = 0) uniform StageUniform {
-    float _dummy;
+    uint is_typing;
 } stage_uniform;
 
 layout(set = 2, binding = 0) uniform ObjectUniform {
     mat4 model;
     vec3 color;
-    float _pad1;
+    uint use_color;
     vec2 uv_offset;
     vec2 uv_area;
 } object_uniform;
@@ -29,10 +29,14 @@ out gl_PerVertex {
 };
 out layout(location = 0) vec4 color;
 out layout(location = 1) vec2 uv;
+out layout(location = 2) uint is_typing;
+out layout(location = 3) uint use_color;
 
 void main() {
     gl_Position = in_position * object_uniform.model;
+    is_typing = stage_uniform.is_typing;
+    use_color = object_uniform.use_color;
     color = vec4(object_uniform.color, 1.0);
     uv = (in_uv.xz * object_uniform.uv_area) + object_uniform.uv_offset;
-    color = vec4(in_uv.xz, 0.0, 1.0);
+    // color = vec4(in_uv.xz, 0.0, 1.0);
 }
