@@ -13,6 +13,9 @@ layout(set = 1, binding = 0) uniform StageUniform {
 layout(set = 2, binding = 0) uniform ObjectUniform {
     mat4 model;
     vec3 color;
+    float _pad1;
+    vec2 uv_offset;
+    vec2 uv_area;
 } object_uniform;
 
 layout(location = 0) in vec4 in_position;
@@ -30,6 +33,6 @@ out layout(location = 1) vec2 uv;
 void main() {
     gl_Position = in_position * object_uniform.model;
     color = vec4(object_uniform.color, 1.0);
-    uv = in_uv.xz;
+    uv = (in_uv.xz * object_uniform.uv_area) + object_uniform.uv_offset;
     color = vec4(in_uv.xz, 0.0, 1.0);
 }

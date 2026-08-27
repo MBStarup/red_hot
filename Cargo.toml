@@ -21,6 +21,7 @@ edition = "2021"
 ash = "0.38.0"
 ash-window = "0.13.0"
 glb = { git = "https://github.com/MBStarup/glb_rs", version = "0.1.0" }
+img = { git = "https://github.com/MBStarup/img_rs", version = "0.1.0" }
 num = "0.4.3"
 rand = "0.10.2"
 raw-window-handle = "0.6.2"
