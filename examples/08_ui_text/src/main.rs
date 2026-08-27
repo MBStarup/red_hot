@@ -1,9 +1,11 @@
 use std::{
     f32::consts::{PI, TAU},
+    fs::read,
     println,
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use img::parse_bmp;
 use rand::{RngExt, SeedableRng};
 
 use ash::vk;
@@ -18,6 +20,17 @@ use winit::{
     platform::run_return::EventLoopExtRunReturn,
     window::WindowBuilder,
 };
+
+fn texture_atlas_letter_coords(c: char) -> (i32, i32) {
+    const ROWS: &[&str] = &["abcdefghijklmnopqrst", "uvxyz1234567890+-?=!", ".:,; {[]}w*\\'^#~/"];
+
+    let c = c.to_ascii_lowercase();
+
+    ROWS.iter()
+        .enumerate()
+        .find_map(|(row, chars)| chars.chars().position(|x| x == c).map(|col| (col as i32, row as i32)))
+        .unwrap_or_else(|| texture_atlas_letter_coords('?')) //. Default to '?' for unknown characters
+}
 
 #[rustfmt::skip] fn main() { unsafe { umain() } }
 unsafe fn umain() {
@@ -58,9 +71,19 @@ unsafe fn umain() {
     #[allow(dead_code)]
     #[derive(Clone, Debug, Copy)]
     #[repr(C)]
+    struct UiStageUniform {
+        is_typing: u32, //? Is u32 the smallest I'm allowed here?
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Debug, Copy)]
+    #[repr(C)]
     struct UiObjectUniform {
         model_mat: Mat4x4<f32>,
         color: Vec3<f32>,
+        use_color: u32,
+        texture_offset: [f32; 2],
+        texture_area: [f32; 2],
     }
 
     #[rustfmt::skip]
@@ -249,89 +272,34 @@ unsafe fn umain() {
         &[],
     );
 
-    const TEXTURE_ATLAS_WIDTH: u32 = 2000;
-    const TEXTURE_ATLAS_HEIGHT: u32 = 2000;
+    let texture_atlas_file: &mut [u8] = &mut read(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/text.bmp")).unwrap();
+    let texture_atlas_bmp = parse_bmp(texture_atlas_file);
+
+    let mut texture_atlas_rgba = Vec::with_capacity(texture_atlas_bmp.data.len() / 3 * 4);
+
+    for i in (0..texture_atlas_bmp.data.len()).step_by(3) {
+        texture_atlas_rgba.extend_from_slice(&[
+            texture_atlas_bmp.data[i + 0],
+            texture_atlas_bmp.data[i + 1],
+            texture_atlas_bmp.data[i + 2],
+            if texture_atlas_bmp.data[i + 0] == texture_atlas_bmp.data[i + 1] && texture_atlas_bmp.data[i + 1] == texture_atlas_bmp.data[i + 2] {
+                255 - texture_atlas_bmp.data[i + 0] //. Grey = transparent
+            } else {
+                255
+            },
+        ]);
+    }
+
     let texture_atlas = renderer.register_image(RedHotImageCreateInfo {
-        size: ImageSize::Fixed(TEXTURE_ATLAS_WIDTH, TEXTURE_ATLAS_HEIGHT),
+        size: ImageSize::Fixed(texture_atlas_bmp.width, texture_atlas_bmp.height),
         format: vk::Format::R8G8B8A8_UNORM,
         usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
         memory_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
         image_aspect_mask: vk::ImageAspectFlags::COLOR,
     });
 
-    const BARS: [[u8; 4]; 7] = [
-        [0xC0, 0xC0, 0xC0, 0xFF], // grey
-        [0xC0, 0xC0, 0x00, 0xFF], // yellow
-        [0x00, 0xC0, 0xC0, 0xFF], // cyan
-        [0x00, 0xC0, 0x00, 0xFF], // green
-        [0xC0, 0x00, 0xC0, 0xFF], // magenta
-        [0xC0, 0x00, 0x00, 0xFF], // red
-        [0x00, 0x00, 0xC0, 0xFF], // blue
-    ];
-
-    const MARKER_SIZE: u32 = 150;
-    const BORDER: u32 = 12;
-    const CROSS: u32 = 8;
-    const ALPHA_CHECKER: u32 = 40; // underlying checker cell size, so ramp shows through
-
-    let test_card: Vec<u8> = (0..TEXTURE_ATLAS_WIDTH * TEXTURE_ATLAS_HEIGHT)
-        .flat_map(|i| {
-            let x = i % TEXTURE_ATLAS_WIDTH;
-            let y = i / TEXTURE_ATLAS_WIDTH;
-
-            let in_top_left = x < MARKER_SIZE && y < MARKER_SIZE;
-            let in_top_right = x >= TEXTURE_ATLAS_WIDTH - MARKER_SIZE && y < MARKER_SIZE;
-            let in_bottom_left = x < MARKER_SIZE && y >= TEXTURE_ATLAS_HEIGHT - MARKER_SIZE;
-            let in_bottom_right = x >= TEXTURE_ATLAS_WIDTH - MARKER_SIZE && y >= TEXTURE_ATLAS_HEIGHT - MARKER_SIZE;
-
-            let cx = TEXTURE_ATLAS_WIDTH / 2;
-            let cy = TEXTURE_ATLAS_HEIGHT / 2;
-            let on_crosshair = (x.abs_diff(cx) < CROSS) || (y.abs_diff(cy) < CROSS);
-
-            let on_border = x < BORDER || y < BORDER || x >= TEXTURE_ATLAS_WIDTH - BORDER || y >= TEXTURE_ATLAS_HEIGHT - BORDER;
-
-            // middle band (roughly y in [2/3, 5/6)) reserved for an alpha ramp over a checker backdrop
-            let in_alpha_band = y >= TEXTURE_ATLAS_HEIGHT * 2 / 3 && y < TEXTURE_ATLAS_HEIGHT * 5 / 6;
-
-            if in_top_left {
-                [0xFF, 0x00, 0x00, 0xFF]
-            } else if in_top_right {
-                [0x00, 0xFF, 0x00, 0xFF]
-            } else if in_bottom_left {
-                [0x00, 0x00, 0xFF, 0xFF]
-            } else if in_bottom_right {
-                [0xFF, 0xFF, 0x00, 0xFF]
-            } else if on_crosshair {
-                [0xFF, 0xFF, 0xFF, 0xFF]
-            } else if on_border {
-                [0x00, 0x00, 0x00, 0xFF]
-            } else if y < TEXTURE_ATLAS_HEIGHT * 2 / 3 {
-                let bar = (x * 7 / TEXTURE_ATLAS_WIDTH) as usize;
-                BARS[bar]
-            }
-            // alpha test band: checkerboard backdrop colored orange, with alpha ramping 0->255 left to right
-            else if in_alpha_band {
-                let checker_on = ((x / ALPHA_CHECKER) + (y / ALPHA_CHECKER)) % 2 == 0;
-                let base = if checker_on { [0xFF, 0x80, 0x00] } else { [0x40, 0x40, 0x40] }; // orange / grey checker
-                let alpha = (x * 255 / TEXTURE_ATLAS_WIDTH) as u8; // ramps 0 (fully transparent) -> 255 (fully opaque), left to right
-                [base[0], base[1], base[2], alpha]
-            }
-            // bottom-left: black-to-white gradient
-            else if x < TEXTURE_ATLAS_WIDTH * 3 / 4 {
-                let v = (x * 255 / (TEXTURE_ATLAS_WIDTH * 3 / 4)) as u8;
-                [v, v, v, 0xFF]
-            }
-            // bottom-right: pure primary/white swatches
-            else {
-                let swatches: [[u8; 4]; 4] = [[0xFF, 0xFF, 0xFF, 0xFF], [0xFF, 0x00, 0x00, 0xFF], [0x00, 0xFF, 0x00, 0xFF], [0x00, 0x00, 0xFF, 0xFF]];
-                let local_x = x - TEXTURE_ATLAS_WIDTH * 3 / 4;
-                let swatch = (local_x * 4 / (TEXTURE_ATLAS_WIDTH / 4)).min(3) as usize;
-                swatches[swatch]
-            }
-        })
-        .collect();
-
-    renderer.write_to_image(red_hot::renderer::RedHotStageImage::Image(texture_atlas), &test_card);
+    println!("texture_atlas_bmp.data.len(): {}", texture_atlas_bmp.data.len());
+    renderer.write_to_image(red_hot::renderer::RedHotStageImage::Image(texture_atlas), &texture_atlas_rgba);
 
     let ui_stage = renderer.register_stage(
         "UI".to_owned(),
@@ -439,7 +407,11 @@ unsafe fn umain() {
     let mut should_close = false;
     let mut a = 1.0;
     let mut b = 1.0;
-    let mut c = 1.0;
+    let mut c = 0.03;
+
+    let mut typing = false;
+    let mut text_input = String::new();
+    let mut debug_line = "*loading...".to_owned();
 
     let mut focused = false;
 
@@ -485,26 +457,44 @@ unsafe fn umain() {
                     should_close = true; //. if we pressed close, close
                     *control_flow = ControlFlow::Exit;
                 },
-                Event::WindowEvent { event: WindowEvent::KeyboardInput { input: KeyboardInput { state: ElementState::Pressed, virtual_keycode: Some(keycode), .. }, .. }, .. } => match keycode {
-                    VirtualKeyCode::W => position += Vec3::<f32>::forward().rotate(camera_transform.rotation),
-                    VirtualKeyCode::S => position += Vec3::<f32>::backwards().rotate(camera_transform.rotation),
-                    VirtualKeyCode::A => position += Vec3::<f32>::left().rotate(camera_transform.rotation),
-                    VirtualKeyCode::D => position += Vec3::<f32>::right().rotate(camera_transform.rotation),
-                    VirtualKeyCode::Space => position += Vec3::<f32>::up(),
-                    VirtualKeyCode::LControl => position += Vec3::<f32>::down(),
-                    VirtualKeyCode::R => cam_pitch -= 0.3,
-                    VirtualKeyCode::F => cam_pitch += 0.3,
-                    VirtualKeyCode::Q => cam_yaw -= 0.3,
-                    VirtualKeyCode::E => cam_yaw += 0.3,
-                    VirtualKeyCode::Key1 => control -= 0.3,
-                    VirtualKeyCode::Key2 => control += 0.3,
-                    VirtualKeyCode::U => a -= 0.1,
-                    VirtualKeyCode::I => a += 0.1,
-                    VirtualKeyCode::J => b -= 0.1,
-                    VirtualKeyCode::K => b += 0.1,
-                    VirtualKeyCode::N => c -= 0.1,
-                    VirtualKeyCode::M => c += 0.1,
-                    _ => (),
+                Event::WindowEvent { event: WindowEvent::ReceivedCharacter(text), .. } => {
+                    if typing && !text.is_control() {
+                        text_input.push(text);
+                    }
+                },
+                Event::WindowEvent { event: WindowEvent::KeyboardInput { input: KeyboardInput { state: ElementState::Pressed, virtual_keycode: Some(keycode), .. }, .. }, .. } => {
+                    if keycode == VirtualKeyCode::Return {
+                        //. Handle enter in either case
+                        typing = !typing;
+                    } else if typing {
+                        if keycode == VirtualKeyCode::Back {
+                            if !text_input.is_empty() {
+                                text_input.pop();
+                            }
+                        }
+                    } else {
+                        match keycode {
+                            VirtualKeyCode::W => position += Vec3::<f32>::forward().rotate(camera_transform.rotation),
+                            VirtualKeyCode::S => position += Vec3::<f32>::backwards().rotate(camera_transform.rotation),
+                            VirtualKeyCode::A => position += Vec3::<f32>::left().rotate(camera_transform.rotation),
+                            VirtualKeyCode::D => position += Vec3::<f32>::right().rotate(camera_transform.rotation),
+                            VirtualKeyCode::Space => position += Vec3::<f32>::up(),
+                            VirtualKeyCode::LControl => position += Vec3::<f32>::down(),
+                            VirtualKeyCode::R => cam_pitch -= 0.3,
+                            VirtualKeyCode::F => cam_pitch += 0.3,
+                            VirtualKeyCode::Q => cam_yaw -= 0.3,
+                            VirtualKeyCode::E => cam_yaw += 0.3,
+                            VirtualKeyCode::Key1 => control -= 0.3,
+                            VirtualKeyCode::Key2 => control += 0.3,
+                            VirtualKeyCode::U => a -= 0.1,
+                            VirtualKeyCode::I => a += 0.1,
+                            VirtualKeyCode::J => b -= 0.1,
+                            VirtualKeyCode::K => b += 0.1,
+                            VirtualKeyCode::N => c -= 0.1,
+                            VirtualKeyCode::M => c += 0.1,
+                            _ => (),
+                        }
+                    }
                 },
                 Event::DeviceEvent { event: MouseMotion { delta: (mouse_x, mouse_y) }, .. } => {
                     if focused {
@@ -541,23 +531,103 @@ unsafe fn umain() {
                             ])
                             .collect(),
                     );
-                    #[rustfmt::skip]
-                    renderer.render_stage(
-                        ui_stage,
-                        DrawUniform{ _dummy: 0.0 }, //. Dummy stage uniform
-                        vec![
-                            plane_meshi,
-                            plane_meshi,
-                            plane_meshi,
-                            plane_meshi,
-                        ],
-                        vec![
-                            UiObjectUniform { model_mat: Transform { position: Vec3 { x:  1.0 * (1.0 - (0.0001 * window_height as f32)), y:  1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 }, rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU/4.0), scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 } }.get_matrix(), color: Vec3 { x: 1.0, y: 1.0, z: 1.0 } },
-                            UiObjectUniform { model_mat: Transform { position: Vec3 { x:  1.0 * (1.0 - (0.0001 * window_height as f32)), y: -1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 }, rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU/4.0), scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 } }.get_matrix(), color: Vec3 { x: 1.0, y: 0.0, z: 1.0 } },
-                            UiObjectUniform { model_mat: Transform { position: Vec3 { x: -1.0 * (1.0 - (0.0001 * window_height as f32)), y:  1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 }, rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU/4.0), scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 } }.get_matrix(), color: Vec3 { x: 0.0, y: 1.0, z: 1.0 } },
-                            UiObjectUniform { model_mat: Transform { position: Vec3 { x: -1.0 * (1.0 - (0.0001 * window_height as f32)), y: -1.0 * (1.0 - (0.0001 * window_width as f32)), z: 0.0 }, rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU/4.0), scale: Vec3 { x: 0.0001 * window_height as f32, y: 0.0001, z: 0.0001 * window_width as f32 } }.get_matrix(), color: Vec3 { x: 0.0, y: 0.0, z: 1.0 } },
-                        ],
-                    );
+
+                    let objects: Vec<UiObjectUniform> = if text_input.is_empty() { "*ENTER*" } else { &text_input }
+                        .chars()
+                        .enumerate()
+                        .map(|(i, char)| {
+                            let (atlas_x, atlas_y) = texture_atlas_letter_coords(char);
+                            let scale = c;
+                            let row_count = (1.0 / scale) as usize;
+                            let ratio = window_width as f32 / window_height as f32;
+
+                            UiObjectUniform {
+                                model_mat: Transform {
+                                    position: Vec3 { x: -1.0 + scale + (i % row_count) as f32 * scale * 2.0, y: -1.0 + scale * ratio + ((i / row_count) as f32 * scale * ratio * 2.0), z: 0.0 },
+                                    rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU / 4.0),
+                                    scale: Vec3 { x: scale, y: scale, z: scale * ratio },
+                                }
+                                .get_matrix(),
+
+                                color: Vec3 { x: 0.3, y: 0.2, z: 0.9 },
+
+                                use_color: if "abcdefghijklmnopqrstuvwxyz0123456789+-?=!.:,;' ".contains(char.to_ascii_lowercase()) {
+                                    1
+                                } else {
+                                    0
+                                },
+
+                                texture_offset: [
+                                    (1.0 + atlas_x as f32 * 99.0) / texture_atlas_bmp.width as f32,
+                                    (1.0 + atlas_y as f32 * 98.5) / texture_atlas_bmp.height as f32,
+                                ],
+
+                                texture_area: [98.0 / texture_atlas_bmp.width as f32, 98.0 / texture_atlas_bmp.height as f32],
+                            }
+                        })
+                        .chain([{
+                            let scale = c;
+                            let ratio = window_width as f32 / window_height as f32;
+                            UiObjectUniform {
+                                model_mat: Transform {
+                                    position: Vec3 { x: 1.0 - scale, y: 1.0 - scale * ratio, z: 0.0 },
+                                    rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU / 4.0),
+                                    scale: Vec3 { x: scale, y: scale, z: scale * ratio },
+                                }
+                                .get_matrix(),
+
+                                color: Vec3 { x: 0.3, y: 0.2, z: 0.9 },
+                                use_color: 0,
+                                texture_offset: [
+                                    (1.0 + ((t / 0.1) as u32 % 8) as f32 * 99.0) / texture_atlas_bmp.width as f32,
+                                    (1.0 + 12 as f32 * 98.75) / texture_atlas_bmp.height as f32,
+                                ],
+
+                                texture_area: [98.0 / texture_atlas_bmp.width as f32, 98.0 / texture_atlas_bmp.height as f32],
+                            }
+                        }])
+                        .chain({
+                            let scale = c;
+                            let ratio = window_width as f32 / window_height as f32;
+
+                            let line_count = debug_line.matches('\n').count() + 1;
+
+                            debug_line
+                                .as_str()
+                                .split('\n')
+                                .enumerate()
+                                .flat_map(move |(line_index, line)| line.chars().enumerate().map(move |(col, char)| (col, line_index, char)))
+                                .map(move |(col, line_index, char)| {
+                                    let (atlas_x, atlas_y) = texture_atlas_letter_coords(char);
+
+                                    UiObjectUniform {
+                                        model_mat: Transform {
+                                            position: Vec3 { x: -1.0 + scale + col as f32 * scale * 2.0, y: 1.0 - scale * ratio - (line_count - 1 - line_index) as f32 * scale * ratio * 2.0, z: 0.0 },
+                                            rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU / 4.0),
+                                            scale: Vec3 { x: scale, y: scale, z: scale * ratio },
+                                        }
+                                        .get_matrix(),
+
+                                        color: Vec3 { x: 0.3, y: 0.2, z: 0.9 },
+
+                                        use_color: if "abcdefghijklmnopqrstuvwxyz0123456789+-?=!.:,;' ".contains(char.to_ascii_lowercase()) {
+                                            1
+                                        } else {
+                                            0
+                                        },
+
+                                        texture_offset: [
+                                            (1.0 + atlas_x as f32 * 99.0) / texture_atlas_bmp.width as f32,
+                                            (1.0 + atlas_y as f32 * 98.5) / texture_atlas_bmp.height as f32,
+                                        ],
+
+                                        texture_area: [98.0 / texture_atlas_bmp.width as f32, 98.0 / texture_atlas_bmp.height as f32],
+                                    }
+                                })
+                        })
+                        .collect();
+
+                    renderer.render_stage(ui_stage, UiStageUniform { is_typing: typing as u32 }, vec![plane_meshi; objects.len()], objects);
                     renderer.render_commit();
                 },
                 Event::RedrawEventsCleared => *control_flow = ControlFlow::Exit, //. "return"
@@ -572,8 +642,8 @@ unsafe fn umain() {
         frametime_index = (frametime_index + 1) % N_FRAMETIME;
         if frametime_circ_buffer[N_FRAMETIME - 1] != 0.0 {
             //. Wait untill buffer is filled
-            // let avg_frametime = frametime_circ_buffer.iter().sum::<f32>() / N_FRAMETIME as f32;
-            // println!("fps: {}", 1.0 / avg_frametime);
+            let avg_frametime = frametime_circ_buffer.iter().sum::<f32>() / N_FRAMETIME as f32;
+            debug_line = format!("t:{t:0.2}\na:{a:0.2}\nb:{b:0.2}\nc:{c:0.2}\n*fps:{:0.2}", 1.0 / avg_frametime);
         }
 
         dt *= a; //. Modifyer
