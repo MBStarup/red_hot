@@ -24,7 +24,7 @@ use winit::{
 };
 
 fn texture_atlas_letter_coords(c: char) -> (i32, i32) {
-    const ROWS: &[&str] = &["abcdefghijklmnopqrst", "uvxyz1234567890+-?=!", ".:,; {[]}w*'"];
+    const ROWS: &[&str] = &["abcdefghijklmnopqrst", "uvxyz1234567890+-?=!", ".:,; {[]}w*\\'^#~"];
 
     let c = c.to_ascii_lowercase();
 
@@ -80,6 +80,15 @@ fn main() {
         #[repr(C)]
         struct ObjectUniform {
             model_mat: Mat4x4<f32>,
+            is_light: u32,
+        }
+
+        #[allow(dead_code)]
+        #[derive(Clone, Debug, Copy)]
+        #[repr(C)]
+        struct ObjectUniform2 {
+            model_mat: Mat4x4<f32>,
+            color: Vec3<f32>,
             is_light: u32,
         }
 
@@ -182,13 +191,15 @@ fn main() {
         struct Object {
             transform: Transform<f32>,
             mesh: MeshIndex,
+            color: Vec3<f32>,
+            color_reset_cooldown: f32,
         }
 
         let mut position = Vec3 { x: 0.0, y: 0.0, z: -10.0 };
         let mut cam_yaw = 0.0;
         let mut cam_pitch = 0.0;
 
-        let proj_mat = perspective_matrix(TAU / 4.0, 0.1, 10000.0);
+        let proj_mat = perspective_matrix(TAU / 4.0, 0.1, 1000.0);
 
         let mut event_loop = EventLoop::new().expect("Failed to create new event loop? How can this even fail???");
 
@@ -576,7 +587,7 @@ fn main() {
         let meshes = vec![renderer.register_mesh(cube_mesh), renderer.register_mesh(pyramid_mesh)];
         let plane_meshi = renderer.register_mesh(plane_mesh);
         let inverse_cube_meshi = renderer.register_mesh(inverse_cube_mesh);
-        let room_box = Object { transform: Transform { scale: [100.0, 100.0, 100.0].into(), ..Transform::default() }, mesh: inverse_cube_meshi };
+        let room_box = Object { transform: Transform { scale: [100.0, 100.0, 100.0].into(), ..Transform::default() }, mesh: inverse_cube_meshi, color: Vec3::one(), color_reset_cooldown: 0.0 };
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(6969);
         let num_objs = 69;
@@ -584,14 +595,16 @@ fn main() {
             .map(|i| Object {
                 transform: Transform {
                     position: Vec3::<f32> {
-                        x: rng.random_range(-room_box.transform.scale.x..room_box.transform.scale.x),
-                        y: rng.random_range(-room_box.transform.scale.y..room_box.transform.scale.y),
-                        z: rng.random_range(-room_box.transform.scale.z..room_box.transform.scale.z),
+                        x: rng.random_range(-(room_box.transform.scale.x - 10.0)..(room_box.transform.scale.x - 10.0)),
+                        y: rng.random_range(-(room_box.transform.scale.y - 10.0)..(room_box.transform.scale.y - 10.0)),
+                        z: rng.random_range(-(room_box.transform.scale.z - 10.0)..(room_box.transform.scale.z - 10.0)),
                     },
                     rotation: Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 0.0 }.normalize(), i as f32 * TAU * 0.69),
                     scale: Vec3::<f32> { x: rng.random_range(0.5..10.0), y: rng.random_range(0.5..10.0), z: rng.random_range(0.5..10.0) },
                 },
                 mesh: meshes[i % meshes.len()],
+                color: Vec3::one(),
+                color_reset_cooldown: 0.0,
             })
             .collect();
 
@@ -609,8 +622,8 @@ fn main() {
             })
             .collect();
 
-        let mut light_box = Object { transform: Transform::default(), mesh: meshes[0] };
-        let mut light_box2 = Object { transform: Transform::default(), mesh: meshes[0] };
+        let mut light_box = Object { transform: Transform::default(), mesh: meshes[0], color: Vec3::one(), color_reset_cooldown: 0.0 };
+        let mut light_box2 = Object { transform: Transform::default(), mesh: meshes[0], color: Vec3::one(), color_reset_cooldown: 0.0 };
 
         let mut last_time;
         let mut current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
@@ -635,22 +648,35 @@ fn main() {
         while !should_close {
             //. Update the objects
             for (i, object) in &mut objects.iter_mut().enumerate() {
-                object.transform.rotation = Quaternion::from_axis_rotation(rotation_data[i].0, rotation_data[i].1 * dt) * object.transform.rotation;
+                // object.transform.rotation = Quaternion::from_axis_rotation(rotation_data[i].0, rotation_data[i].1 * dt) * object.transform.rotation;
                 object.transform.position = (rotation_data[i].0 * rotation_data[i].1 * b as f32 * dt) + object.transform.position;
-                if object.transform.position.x >= (room_box.transform.scale.x - object.transform.scale.x) || object.transform.position.x <= -(room_box.transform.scale.x - object.transform.scale.x) {
+                let radius = (object.transform.scale.x.powi(2) + object.transform.scale.y.powi(2) + object.transform.scale.z.powi(2)).sqrt() * 0.5;
+
+                if object.color_reset_cooldown <= 0.0 {
+                    object.color = Vec3 { x: 1.0, y: 1.0, z: 1.0 };
+                    object.color_reset_cooldown = 0.0;
+                }
+                if object.transform.position.x >= (room_box.transform.scale.x - radius) || object.transform.position.x <= -(room_box.transform.scale.x - radius) {
                     rotation_data[i].0.x = -rotation_data[i].0.x;
+                    object.color = Vec3 { x: 1.0, y: 0.0, z: 0.0 };
+                    object.color_reset_cooldown = 10.0;
                 }
-                if object.transform.position.y >= (room_box.transform.scale.y - object.transform.scale.y) || object.transform.position.y <= -(room_box.transform.scale.y - object.transform.scale.y) {
+                if object.transform.position.y >= (room_box.transform.scale.y - radius) || object.transform.position.y <= -(room_box.transform.scale.y - radius) {
                     rotation_data[i].0.y = -rotation_data[i].0.y;
+                    object.color = Vec3 { x: 1.0, y: 0.0, z: 0.0 };
+                    object.color_reset_cooldown = 10.0;
                 }
-                if object.transform.position.z >= (room_box.transform.scale.z - object.transform.scale.z) || object.transform.position.z <= -(room_box.transform.scale.z - object.transform.scale.z) {
+                if object.transform.position.z >= (room_box.transform.scale.z - radius) || object.transform.position.z <= -(room_box.transform.scale.z - radius) {
                     rotation_data[i].0.z = -rotation_data[i].0.z;
+                    object.color = Vec3 { x: 1.0, y: 0.0, z: 0.0 };
+                    object.color_reset_cooldown = 10.0;
                 }
+                object.color_reset_cooldown -= dt;
             }
-            light_box.transform.position = Vec3 { x: 50.0 * f32::sin(t * 1.0), y: 50.0, z: 50.0 * f32::cos(t * 1.0) };
-            light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 1.0 }.normalize(), 0.01 * dt) * light_box.transform.rotation;
-            light_box2.transform.position = Vec3 { x: 50.0 * f32::sin(PI + t * 1.0), y: 50.0 * f32::sin(PI + t * 1.0), z: 50.0 * f32::cos(PI + t * 1.0) };
-            light_box2.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 1.0 }.normalize(), -0.1 * dt) * light_box2.transform.rotation;
+            // light_box.transform.position = Vec3 { x: 50.0 * f32::sin(t * 1.0), y: 50.0, z: 50.0 * f32::cos(t * 1.0) };
+            // light_box.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 1.0 }.normalize(), 0.01 * dt) * light_box.transform.rotation;
+            // light_box2.transform.position = Vec3 { x: 50.0 * f32::sin(PI + t * 1.0), y: 50.0 * f32::sin(PI + t * 1.0), z: 50.0 * f32::cos(PI + t * 1.0) };
+            // light_box2.transform.rotation = Quaternion::from_axis_rotation(Vec3 { x: 1.0, y: 0.0, z: 1.0 }.normalize(), -0.1 * dt) * light_box2.transform.rotation;
 
             let light_dir = Vec3::forward().rotate(light_box.transform.rotation);
             let light_dir2 = Vec3::forward().rotate(light_box2.transform.rotation);
@@ -701,8 +727,8 @@ fn main() {
                                 KeyCode::Digit2 => control += 0.3,
                                 KeyCode::KeyU => a -= 0.1,
                                 KeyCode::KeyI => a += 0.1,
-                                KeyCode::KeyJ => b -= 0.1,
-                                KeyCode::KeyK => b += 0.1,
+                                KeyCode::KeyJ => b -= 1.0,
+                                KeyCode::KeyK => b += 1.0,
                                 KeyCode::KeyN => c = 0.001 + (c - 0.01) % 1.001,
                                 KeyCode::KeyM => c = 0.001 + (c + 0.01) % 1.001,
                                 KeyCode::KeyZ => debug = !debug,
@@ -763,11 +789,11 @@ fn main() {
                     objects.iter().map(|x| x.mesh).chain([room_box.mesh, light_box.mesh, light_box2.mesh]).collect(),
                     objects
                         .iter()
-                        .map(|x| ObjectUniform { model_mat: x.transform.get_matrix(), is_light: 0 })
+                        .map(|x| ObjectUniform2 { model_mat: x.transform.get_matrix(), is_light: 0, color: x.color })
                         .chain([
-                            ObjectUniform { model_mat: room_box.transform.get_matrix(), is_light: 0 },
-                            ObjectUniform { model_mat: light_box.transform.get_matrix(), is_light: 1 },
-                            ObjectUniform { model_mat: light_box2.transform.get_matrix(), is_light: 1 },
+                            ObjectUniform2 { model_mat: room_box.transform.get_matrix(), is_light: 0, color: Vec3::one() },
+                            ObjectUniform2 { model_mat: light_box.transform.get_matrix(), is_light: 1, color: Vec3::one() },
+                            ObjectUniform2 { model_mat: light_box2.transform.get_matrix(), is_light: 1, color: Vec3::one() },
                         ])
                         .collect(),
                 );
@@ -814,7 +840,7 @@ fn main() {
 
                             color: Vec3 { x: 0.3, y: 0.2, z: 0.9 },
 
-                            use_color: if "abcdefghijklmnopqrstuvwxyz0123456789+-?=!.:,; ".contains(char.to_ascii_lowercase()) {
+                            use_color: if "abcdefghijklmnopqrstuvwxyz0123456789+-?=!.:,;' ".contains(char.to_ascii_lowercase()) {
                                 1
                             } else {
                                 0
@@ -828,6 +854,27 @@ fn main() {
                             texture_area: [98.0 / texture_atlas_bmp.width as f32, 98.0 / texture_atlas_bmp.height as f32],
                         }
                     })
+                    .chain([{
+                        let scale = c;
+                        let ratio = window_width as f32 / window_height as f32;
+                        UiObjectUniform {
+                            model_mat: Transform {
+                                position: Vec3 { x: 1.0 - scale, y: 1.0 - scale * ratio, z: 0.0 },
+                                rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU / 4.0),
+                                scale: Vec3 { x: scale, y: scale, z: scale * ratio },
+                            }
+                            .get_matrix(),
+
+                            color: Vec3 { x: 0.3, y: 0.2, z: 0.9 },
+                            use_color: 0,
+                            texture_offset: [
+                                (1.0 + ((t / 0.1) as u32 % 8) as f32 * 99.0) / texture_atlas_bmp.width as f32,
+                                (1.0 + 12 as f32 * 98.75) / texture_atlas_bmp.height as f32,
+                            ],
+
+                            texture_area: [98.0 / texture_atlas_bmp.width as f32, 98.0 / texture_atlas_bmp.height as f32],
+                        }
+                    }])
                     .collect();
 
                 renderer.render_stage(

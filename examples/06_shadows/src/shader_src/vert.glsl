@@ -13,10 +13,12 @@ layout(set = 1, binding = 0) uniform StageUniform {
     mat4 light_view_proj2;
     vec4 light_dir;
     vec4 light_dir2;
+    float control;
 } stage_uniform;
 
 layout(set = 2, binding = 0) uniform ObjectUniform {
     mat4 model;
+    vec3 color;
     int is_light;
 } object_uniform;
 
@@ -39,9 +41,12 @@ out layout(location = 5) vec4 light_dir2;
 out layout(location = 6) float brightness;
 out layout(location = 7) float brightness2;
 flat out layout(location = 8) int is_light;
+flat out layout(location = 9) float control;
+
 
 
 void main() {
+    control = stage_uniform.control;
     gl_Position = in_position * object_uniform.model * stage_uniform.view * stage_uniform.proj;
     light_space_pos = in_position * object_uniform.model * stage_uniform.light_view_proj;
     light_space_pos2 = in_position * object_uniform.model * stage_uniform.light_view_proj2;
@@ -53,5 +58,6 @@ void main() {
     brightness = dot(-stage_uniform.light_dir.xyz, normalize(normalize(in_normal.xyz) * inverse(transpose(mat3(object_uniform.model)))));
     brightness2 = dot(-stage_uniform.light_dir2.xyz, normalize(normalize(in_normal.xyz) * inverse(transpose(mat3(object_uniform.model)))));
     color = in_color;
-    // color = in_color * ((brightness + brightness2)/2);
+    color = in_color * ((brightness + brightness2)/2);
+    color = vec4(object_uniform.color, 1.0);
 }

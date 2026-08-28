@@ -9,6 +9,7 @@ in layout(location = 5) vec4 light_dir2;
 in layout(location = 6) float brightness;
 in layout(location = 7) float brightness2;
 flat in layout(location = 8) int is_light;
+flat in layout(location = 9) float control;
 
 layout(set = 1, binding = 1) uniform sampler2DShadow shadow_map;
 layout(set = 1, binding = 2) uniform sampler2DShadow shadow_map2;
@@ -78,13 +79,16 @@ void main() {
         in_light += shadow2;
     }
 
-    float ambient = 0.2;
+
+
+    const float FOG_START  = 50.0;
+    const float FOG_END    = 300.0;
+    float depth = 1.0 / gl_FragCoord.w; //. gl_FragCoord.w scales with depth (z) of view-space position
+    float fog_factor = clamp((FOG_END - depth) / (FOG_END - FOG_START), 0.0, 1.0);
+
+    float ambient = clamp((100.0 - depth) / (100.0 - 1.0), 0.4, 0.1);
     float b = ambient + ((1.0 - ambient)/lights) * in_light;
 
-    // color = vec4(shadow, shadow2, 0.0, 1.0);
-    // float b = ((0.1 * (shadow + shadow2)/2) + (0.9 * max(shadow, shadow2))) * max(ambient, max(brightness, brightness2));
-    // if (!in_light) { b = ambient; }
-    // vec4 tint = mix(vec4(1.0, 0.0, 0.0, 1.0), vec4(0.5, 0.5, 1.0, 1.0), b);
-    // color = mix(in_color, tint, 0.3) * b;
-    color = in_color * b;
+    vec3 shaded = (in_color * b).rgb;
+    color = vec4(mix(vec3(0.7, 0.8, 1.0) * ambient, shaded, fog_factor), in_color.a);
 }
