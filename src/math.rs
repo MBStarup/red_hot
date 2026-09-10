@@ -358,6 +358,12 @@ where T: num::Num + Real
         }
     }
 
+    #[rustfmt::skip]
+    pub fn nlerp(self, other: Quaternion<T>, t: T) -> Quaternion<T>
+    where T: num::Float {
+        self.lerp(other, t).normalize()
+    }
+
     fn normalize(self) -> Quaternion<T>
     where T: num::Float {
         self.mul(T::one() / Float::sqrt(self.dot(&self)))
