@@ -12,7 +12,7 @@ raw-window-handle = { workspace = true }
 winit = { workspace = true }
 
 [workspace]
-members = ["examples/*"]
+members = ["examples/*", "red_hot-build"]
 
 [workspace.package]
 edition = "2021"
@@ -26,4 +26,5 @@ num = "0.4.3"
 rand = "0.10.2"
 raw-window-handle = "0.6.2"
 red_hot = { path = "." }
+red_hot-build = { path = "./red_hot-build" }
 winit = "0.30.13"
