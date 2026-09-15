@@ -1,0 +1,62 @@
+#!/bin/sh
+
+#. Kinda non-robust. Doesn't actually look at the Cargo.tomls, just assumes the project name is the suffix of the directory name after ##_
+
+cd "$(dirname "$0")/.." || exit 1
+
+examples="examples/??_*"
+
+run_example() {
+    name=$1
+
+    #. Full name, e.g. 00_hello_triangle
+    if [ -d "examples/$name" ]; then
+        cargo run -p "${name#??_}"
+        return
+    fi
+
+    #. Numeric prefix, e.g. 00
+    case "$name" in
+        [0-9][0-9])
+            for D in $examples; do
+                base=${D#examples/}
+
+                if [ "${base%%_*}" = "$name" ]; then
+                    cargo run -p "${base#??_}"
+                    return
+                fi
+            done
+            ;;
+    esac
+
+    #. Short name, e.g. hello_triangle
+    for D in $examples; do
+        base=${D#examples/}
+
+        if [ "${base#??_}" = "$name" ]; then
+            cargo run -p "${base#??_}"
+            return
+        fi
+    done
+
+    echo "error: no example matching '$name'" >&2
+    return 1
+}
+
+if [ "$#" -eq 0 ]; then
+    echo "usage: $0 --all | <example> [...]" >&2
+    exit 1
+fi
+
+if [ "$1" = "--all" ]; then
+    cargo clean #. If we want to run all, we're probably testing some major changes and should do a clean
+    for D in $examples; do
+        base=${D#examples/}
+        cargo run -p "${base#??_}" || break
+    done
+    exit
+fi
+
+for arg do
+    run_example "$arg"
+done
