@@ -27,8 +27,8 @@ use winit::{
 
 #[rustfmt::skip] macro_rules! include_shader { ($path:literal) => { include_bytes!(concat!(env!("OUT_DIR"), "/shaders/", $path)) }; }
 
-const SKELETON_SIZE: usize = 24;
-const BONES_PER_VERT: usize = 4;
+mod shader_consts;
+use shader_consts::{BONES_PER_VERT, SKELETON_SIZE};
 
 // TODO: This is a stupid bandaid fix lmao
 #[allow(dead_code)]
@@ -118,6 +118,12 @@ struct AnimationHandler<'a> {
 }
 
 fn animations_from_gltf_data<'a>(gltf_header: &Gltf, gltf_buffer: &[u8]) -> Vec<Animation<'a>> {
+    assert!(
+        gltf_header.skins[0].joints.len() <= SKELETON_SIZE,
+        "Attempted to load skinned mesh \"{:?}\" with {} skin joints, however the maximum skeleton size is {SKELETON_SIZE}",
+        gltf_header.skins[0].name,
+        gltf_header.skins[0].joints.len()
+    );
     iter::once(Animation { name: "Static (Default)".to_owned(), animated_targets: vec![], inverse_bind_matricies: &[], joint_heirachy: vec![] })
         .chain(gltf_header.animations.iter().map(|anim| {
             let animation: Vec<AnimatedTarget<'_>> = anim
@@ -608,11 +614,11 @@ fn main() {
 
         //# Load assets from files
         let glb_file_paths = [
-            // concat!(env!("CARGO_MANIFEST_DIR"), "/assets/Glorp.glb"),
-            // concat!(env!("CARGO_MANIFEST_DIR"), "/assets/test.glb"),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/assets/Glorp.glb"),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/assets/test.glb"),
             concat!(env!("CARGO_MANIFEST_DIR"), "/assets/013_Octogecko_Art.glb"),
             concat!(env!("CARGO_MANIFEST_DIR"), "/assets/021_Rhomgon_Art.glb"),
-            // concat!(env!("CARGO_MANIFEST_DIR"), "/assets/test3.glb"),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/assets/test3.glb"),
         ];
         let mut file_data = glb_file_paths.map(|path| (path, read(path).unwrap()));
         let loaded_meshes: Vec<_> = file_data

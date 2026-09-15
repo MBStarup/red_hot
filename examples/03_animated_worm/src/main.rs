@@ -1,3 +1,5 @@
+#![allow(unused_unsafe)]
+
 use std::{
     f32::consts::TAU,
     mem::MaybeUninit,
@@ -20,8 +22,8 @@ use winit::{
 
 #[rustfmt::skip] macro_rules! include_shader { ($path:literal) => { include_bytes!(concat!(env!("OUT_DIR"), "/shaders/", $path)) }; }
 
-const SKELETON_SIZE: usize = 30; // !!! Important, this is also hardcoded in the shader, so any changes should be reflected there as well
-const BONES_PER_VERT: usize = 3;
+mod shader_consts;
+use shader_consts::{BONES_PER_VERT, SKELETON_SIZE};
 
 fn main() {
     unsafe {

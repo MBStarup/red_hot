@@ -1,6 +1,6 @@
 use std::env;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use red_hot_build::{self as build, attempt};
 
@@ -13,6 +13,6 @@ fn main() {
         build::print_last_build_timestamp();
 
         fs::create_dir_all(&shader_dst)?;
-        build::build_shaders(&shader_src, &shader_dst)?;
+        build::build_shaders!(&shader_src, &shader_dst)?;
     }
 }

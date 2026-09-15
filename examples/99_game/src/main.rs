@@ -25,8 +25,8 @@ use winit::{
 
 #[rustfmt::skip] macro_rules! include_shader { ($path:literal) => { include_bytes!(concat!(env!("OUT_DIR"), "/shaders/", $path)) }; }
 
-const SKELETON_SIZE: usize = 24;
-const BONES_PER_VERT: usize = 4;
+mod shader_consts;
+use shader_consts::{BONES_PER_VERT, SKELETON_SIZE};
 
 //# Anim loading bandaid
 // TODO: This is a stupid bandaid fix lmao
@@ -112,6 +112,12 @@ struct AnimationHandler<'a> {
 }
 
 fn animations_from_gltf_data<'a>(gltf_header: &Gltf, gltf_buffer: &[u8]) -> Vec<Animation<'a>> {
+    assert!(
+        gltf_header.skins[0].joints.len() <= SKELETON_SIZE,
+        "Attempted to load skinned mesh \"{:?}\" with {} skin joints, however the maximum skeleton size is {SKELETON_SIZE}",
+        gltf_header.skins[0].name,
+        gltf_header.skins[0].joints.len()
+    );
     let animations = gltf_header.animations.iter().map(|anim| {
         let animation: Vec<AnimatedTarget<'_>> = anim
             .channels

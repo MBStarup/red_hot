@@ -1,7 +1,4 @@
 #version 450
-#define SKELETON_SIZE 24
-#define BONES_PER_VERT 4
-
 
 layout(set = 0, binding = 0) uniform DrawUniform {
     float _dummy;

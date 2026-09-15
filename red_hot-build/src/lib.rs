@@ -186,11 +186,23 @@ pub fn build_shader(src: impl AsRef<OsStr>, dst: impl AsRef<OsStr>, extra_args: 
     }
 }
 
-pub fn build_shaders(shader_src: &Path, shader_dst: &Path) -> Result<(), Box<dyn std::error::Error>> {
+#[macro_export]
+macro_rules! build_shaders {
+    //. Wrapper macro to automatically fill out empty extra_args, because it needs the annoying type annotations
+    ($src:expr, $dst:expr, $extra_args:expr) => {
+        $crate::build_shaders($src, $dst, $extra_args)
+    };
+    ($src:expr, $dst:expr) => {
+        $crate::build_shaders($src, $dst, [] as [&std::ffi::OsStr; 0])
+    };
+}
+
+pub fn build_shaders(shader_src: &Path, shader_dst: &Path, extra_args: impl IntoIterator<Item: AsRef<OsStr>>) -> Result<(), Box<dyn std::error::Error>> {
     const SHADER_EXTENSIONS: [&str; 6] = [
         // NOTE: Supported extensions from the glslc man page
         "vert", "frag", "tesc", "tese", "geom", "comp",
     ];
+    let extra_args: Vec<_> = extra_args.into_iter().collect();
     for entry in fs::read_dir(shader_src)? {
         let path = entry?.path();
 
@@ -202,7 +214,7 @@ pub fn build_shaders(shader_src: &Path, shader_dst: &Path) -> Result<(), Box<dyn
             }
 
             let output = shader_dst.join(path.file_name().unwrap());
-            build_shader!(&path, output)?;
+            build_shader(&path, output, &extra_args)?;
         }
     }
 
@@ -222,4 +234,49 @@ macro_rules! attempt {
             panic!("{error}");
         }
     };
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RustConst<'a> {
+    pub file: Option<&'a Path>,
+    pub line: usize,
+    pub name: &'a str,
+    pub ty: &'a str,
+    pub value: &'a str,
+}
+
+impl RustConst<'_> {
+    pub fn as_define(&self) -> Option<String> {
+        const SHADER_EXTENSIONS: [&str; 14] = [
+            // NOTE: I just picked some tbh
+            "u8", "u16", "u32", "u64", "usize", "i8", "i16", "i32", "i64", "isize", "f16", "f32", "f64", "&str",
+        ];
+        if SHADER_EXTENSIONS.contains(&self.ty) {
+            Some(format!("-D{}={}", self.name, self.value))
+        } else {
+            warn!(
+                "Const {} of unsupported type {} in {}:{} will not be available in shaders",
+                self.name,
+                self.ty,
+                match self.file {
+                    Some(path) => path.display(),
+                    None => Path::new("[FILENAME OMITTED]").display(),
+                },
+                self.line,
+            );
+            None
+        }
+    }
+}
+
+pub fn parse_consts<'a>(src: &'a str, path: Option<&'a Path>) -> Vec<RustConst<'a>> {
+    src.lines()
+        .enumerate()
+        .filter_map(|(i, line)| {
+            let line = line.trim().strip_prefix("pub const ")?;
+            let (name, rest) = line.split_once(':')?;
+            let (ty, value) = rest.split_once('=')?;
+            Some(RustConst { file: path, line: i, name: name.trim(), ty: ty.trim(), value: value.trim().trim_end_matches(';').trim() })
+        })
+        .collect()
 }
