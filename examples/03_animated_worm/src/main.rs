@@ -20,6 +20,8 @@ use winit::{
 const SKELETON_SIZE: usize = 30; // !!! Important, this is also hardcoded in the shader, so any changes should be reflected there as well
 const BONES_PER_VERT: usize = 3;
 
+#[rustfmt::skip] macro_rules! include_shader { ($path:literal) => { include_bytes!(concat!(env!("OUT_DIR"), "/shaders/", $path)) }; }
+
 #[rustfmt::skip] fn main() { unsafe { umain() } }
 unsafe fn umain() {
     assert_eq!(BONES_PER_VERT, 3, "VertexInputAttributeDescription not generalized");
@@ -383,8 +385,8 @@ unsafe fn umain() {
 
     let default_stage = renderer.register_stage(
         "Default".to_owned(),
-        include_bytes!("./shader/vert.spv"),
-        include_bytes!("./shader/frag.spv"),
+        include_shader!("main.vert"),
+        include_shader!("main.frag"),
         vk::PipelineRasterizationStateCreateInfo {
             cull_mode: vk::CullModeFlags::BACK,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,

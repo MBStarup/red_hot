@@ -21,6 +21,8 @@ use winit::{
     window::WindowBuilder,
 };
 
+#[rustfmt::skip] macro_rules! include_shader { ($path:literal) => { include_bytes!(concat!(env!("OUT_DIR"), "/shaders/", $path)) }; }
+
 fn texture_atlas_letter_coords(c: char) -> (i32, i32) {
     const ROWS: &[&str] = &["abcdefghijklmnopqrst", "uvxyz1234567890+-?=!", ".:,; {[]}w*\\'^#~/"];
 
@@ -202,8 +204,8 @@ unsafe fn umain() {
     });
     let default_stage = renderer.register_stage(
         "Default".to_owned(),
-        include_bytes!("./shader/vert.spv"),
-        include_bytes!("./shader/frag.spv"),
+        include_shader!("main.vert"),
+        include_shader!("main.frag"),
         vk::PipelineRasterizationStateCreateInfo {
             cull_mode: vk::CullModeFlags::BACK,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
@@ -303,8 +305,8 @@ unsafe fn umain() {
 
     let ui_stage = renderer.register_stage(
         "UI".to_owned(),
-        include_bytes!("./shader/ui_vert.spv"),
-        include_bytes!("./shader/ui_frag.spv"),
+        include_shader!("ui.vert"),
+        include_shader!("ui.frag"),
         vk::PipelineRasterizationStateCreateInfo { cull_mode: vk::CullModeFlags::NONE, line_width: 1.0, polygon_mode: vk::PolygonMode::FILL, ..Default::default() },
         vk::PipelineDepthStencilStateCreateInfo {
             depth_test_enable: 0,

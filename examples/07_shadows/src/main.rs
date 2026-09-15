@@ -19,6 +19,8 @@ use winit::{
     window::WindowBuilder,
 };
 
+#[rustfmt::skip] macro_rules! include_shader { ($path:literal) => { include_bytes!(concat!(env!("OUT_DIR"), "/shaders/", $path)) }; }
+
 #[rustfmt::skip] fn main() { unsafe { umain() } }
 unsafe fn umain() {
     println!("Example 07: shadows");
@@ -193,8 +195,8 @@ unsafe fn umain() {
     });
     let shadow_stage = renderer.register_stage(
         "Shadow".to_owned(),
-        include_bytes!("./shader/shadow_vert.spv"),
-        include_bytes!("./shader/shadow_frag.spv"),
+        include_shader!("shadow.vert"),
+        include_shader!("shadow.frag"),
         vk::PipelineRasterizationStateCreateInfo {
             cull_mode: vk::CullModeFlags::FRONT,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
@@ -253,8 +255,8 @@ unsafe fn umain() {
     });
     let shadow_stage2 = renderer.register_stage(
         "Shadow".to_owned(),
-        include_bytes!("./shader/shadow_vert.spv"),
-        include_bytes!("./shader/shadow_frag.spv"),
+        include_shader!("shadow.vert"),
+        include_shader!("shadow.frag"),
         vk::PipelineRasterizationStateCreateInfo {
             cull_mode: vk::CullModeFlags::FRONT,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
@@ -312,8 +314,8 @@ unsafe fn umain() {
     });
     let default_stage = renderer.register_stage(
         "Default".to_owned(),
-        include_bytes!("./shader/vert.spv"),
-        include_bytes!("./shader/frag.spv"),
+        include_shader!("main.vert"),
+        include_shader!("main.frag"),
         vk::PipelineRasterizationStateCreateInfo {
             cull_mode: vk::CullModeFlags::BACK,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,

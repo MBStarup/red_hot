@@ -19,6 +19,8 @@ use winit::{
     window::WindowBuilder,
 };
 
+#[rustfmt::skip] macro_rules! include_shader { ($path:literal) => { include_bytes!(concat!(env!("OUT_DIR"), "/shaders/", $path)) }; }
+
 #[rustfmt::skip] fn main() { unsafe { umain() } }
 unsafe fn umain() {
     println!("Example 06: wireframe");
@@ -171,8 +173,8 @@ unsafe fn umain() {
     });
     let default_stage = renderer.register_stage(
         "Default".to_owned(),
-        include_bytes!("./shader/vert.spv"),
-        include_bytes!("./shader/frag.spv"),
+        include_shader!("main.vert"),
+        include_shader!("main.frag"),
         vk::PipelineRasterizationStateCreateInfo {
             cull_mode: vk::CullModeFlags::BACK,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
@@ -242,8 +244,8 @@ unsafe fn umain() {
     );
     let debug_stage = renderer.register_stage(
         "Debug_Meshes".to_owned(),
-        include_bytes!("./shader/vert.spv"),
-        include_bytes!("./shader/green_frag.spv"),
+        include_shader!("main.vert"),
+        include_shader!("green.frag"),
         vk::PipelineRasterizationStateCreateInfo { cull_mode: vk::CullModeFlags::NONE, line_width: 1.0, polygon_mode: vk::PolygonMode::LINE, ..Default::default() },
         vk::PipelineDepthStencilStateCreateInfo {
             depth_test_enable: 1,

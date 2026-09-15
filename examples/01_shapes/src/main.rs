@@ -16,6 +16,8 @@ use winit::{
     window::WindowBuilder,
 };
 
+#[rustfmt::skip] macro_rules! include_shader { ($path:literal) => { include_bytes!(concat!(env!("OUT_DIR"), "/shaders/", $path)) }; }
+
 #[rustfmt::skip] fn main() { unsafe { umain() } }
 unsafe fn umain() {
     println!("Example 01: shapes");
@@ -171,8 +173,8 @@ unsafe fn umain() {
 
     let default_stage = renderer.register_stage(
         "Default".to_owned(),
-        include_bytes!("./shader/vert.spv"),
-        include_bytes!("./shader/frag.spv"),
+        include_shader!("main.vert"),
+        include_shader!("main.frag"),
         vk::PipelineRasterizationStateCreateInfo {
             cull_mode: vk::CullModeFlags::BACK,
             front_face: vk::FrontFace::COUNTER_CLOCKWISE,
