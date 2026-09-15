@@ -1,4 +1,4 @@
-use std::{ffi::OsStr, process::Command};
+use std::{ffi::OsStr, path::Path, process::Command};
 
 pub const RED: &str = "\x1b[91m";
 pub const GREEN: &str = "\x1b[92m";
@@ -127,8 +127,8 @@ pub fn print_last_build_timestamp() {
     info!("Last build.rs ran {GREEN}{year:04}/{month}/{date:02} {hours:02}:{mins:02}:{secs:02} UTC{RESET}");
 }
 
-pub fn rerun_if_changed(path: &str) {
-    println!("cargo::rerun-if-changed={}", path); // TODO: figure out how to detect of the files in dest_path!() are missing
+pub fn rerun_if_changed<S: AsRef<Path>>(path: S) {
+    println!("cargo::rerun-if-changed={}", path.as_ref().display()); // TODO: figure out how to detect of the files in dest_path!() are missing
 }
 
 #[derive(Debug, Clone, Copy)]

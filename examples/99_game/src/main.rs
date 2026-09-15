@@ -23,6 +23,8 @@ use winit::{
     window::Window,
 };
 
+#[rustfmt::skip] macro_rules! include_shader { ($path:literal) => { include_bytes!(concat!(env!("OUT_DIR"), "/shaders/", $path)) }; }
+
 const SKELETON_SIZE: usize = 24;
 const BONES_PER_VERT: usize = 4;
 
@@ -462,8 +464,8 @@ fn main() {
         #[rustfmt::skip]
         let default_stage = renderer.register_stage(
             "Default".to_owned(),
-            include_bytes!("./shader/vert.spv"),
-            include_bytes!("./shader/frag.spv"),
+            include_shader!("vert.spv"),
+            include_shader!("frag.spv"),
             vk::PipelineRasterizationStateCreateInfo {
                 cull_mode: vk::CullModeFlags::BACK,
                 front_face: vk::FrontFace::COUNTER_CLOCKWISE,

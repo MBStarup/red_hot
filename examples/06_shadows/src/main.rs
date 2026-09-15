@@ -23,6 +23,8 @@ use winit::{
     window::Window,
 };
 
+#[rustfmt::skip] #[rustfmt::skip] macro_rules! include_shader { ($path:literal) => { include_bytes!(concat!(env!("OUT_DIR"), "/shaders/", $path)) }; }
+
 fn texture_atlas_letter_coords(c: char) -> (i32, i32) {
     const ROWS: &[&str] = &["abcdefghijklmnopqrst", "uvxyz1234567890+-?=!", ".:,; {[]}w*\\'^#~"];
 
@@ -222,8 +224,8 @@ fn main() {
         });
         let shadow_stage = renderer.register_stage(
             "Shadow".to_owned(),
-            include_bytes!("./shader/shadow_vert.spv"),
-            include_bytes!("./shader/shadow_frag.spv"),
+            include_shader!("shadow_vert.spv"),
+            include_shader!("shadow_frag.spv"),
             vk::PipelineRasterizationStateCreateInfo {
                 cull_mode: vk::CullModeFlags::FRONT,
                 front_face: vk::FrontFace::COUNTER_CLOCKWISE,
@@ -282,8 +284,8 @@ fn main() {
         });
         let shadow_stage2 = renderer.register_stage(
             "Shadow".to_owned(),
-            include_bytes!("./shader/shadow_vert.spv"),
-            include_bytes!("./shader/shadow_frag.spv"),
+            include_shader!("shadow_vert.spv"),
+            include_shader!("shadow_frag.spv"),
             vk::PipelineRasterizationStateCreateInfo {
                 cull_mode: vk::CullModeFlags::FRONT,
                 front_face: vk::FrontFace::COUNTER_CLOCKWISE,
@@ -341,8 +343,8 @@ fn main() {
         });
         let default_stage = renderer.register_stage(
             "Default".to_owned(),
-            include_bytes!("./shader/vert.spv"),
-            include_bytes!("./shader/frag.spv"),
+            include_shader!("vert.spv"),
+            include_shader!("frag.spv"),
             vk::PipelineRasterizationStateCreateInfo {
                 cull_mode: vk::CullModeFlags::BACK,
                 front_face: vk::FrontFace::COUNTER_CLOCKWISE,
@@ -431,8 +433,8 @@ fn main() {
         );
         let debug_stage = renderer.register_stage(
             "Debug_Meshes".to_owned(),
-            include_bytes!("./shader/vert.spv"),
-            include_bytes!("./shader/green_frag.spv"),
+            include_shader!("vert.spv"),
+            include_shader!("green_frag.spv"),
             vk::PipelineRasterizationStateCreateInfo { cull_mode: vk::CullModeFlags::NONE, line_width: 1.0, polygon_mode: vk::PolygonMode::LINE, ..Default::default() },
             vk::PipelineDepthStencilStateCreateInfo {
                 depth_test_enable: 1,
@@ -527,8 +529,8 @@ fn main() {
 
         let ui_stage = renderer.register_stage(
             "UI".to_owned(),
-            include_bytes!("./shader/ui_vert.spv"),
-            include_bytes!("./shader/ui_frag.spv"),
+            include_shader!("ui_vert.spv"),
+            include_shader!("ui_frag.spv"),
             vk::PipelineRasterizationStateCreateInfo { cull_mode: vk::CullModeFlags::NONE, line_width: 1.0, polygon_mode: vk::PolygonMode::FILL, ..Default::default() },
             vk::PipelineDepthStencilStateCreateInfo {
                 depth_test_enable: 0,
