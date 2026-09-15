@@ -20,8 +20,8 @@ use winit::{
     window::WindowBuilder,
 };
 
-const SKELETON_SIZE: usize = 24;
-const BONES_PER_VERT: usize = 4;
+mod shader_consts;
+use shader_consts::{BONES_PER_VERT, SKELETON_SIZE};
 
 // TODO: This is a stupid bandaid fix lmao
 #[allow(dead_code)]

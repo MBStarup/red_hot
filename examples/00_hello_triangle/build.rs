@@ -1,5 +1,4 @@
 use std::env;
-use std::ffi::OsStr;
 use std::fs;
 use std::path::PathBuf;
 
@@ -14,6 +13,6 @@ fn main() {
         build::print_last_build_timestamp();
 
         fs::create_dir_all(&shader_dst)?;
-        build::build_shaders(&shader_src, &shader_dst)?;
+        build::build_shaders!(&shader_src, &shader_dst)?;
     }
 }
