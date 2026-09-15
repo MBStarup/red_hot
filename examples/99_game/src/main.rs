@@ -109,6 +109,12 @@ struct AnimationHandler<'a> {
 }
 
 fn animations_from_gltf_data<'a>(gltf_header: &Gltf, gltf_buffer: &[u8]) -> Vec<Animation<'a>> {
+    assert!(
+        gltf_header.skins.len() == 0 || gltf_header.skins[0].joints.len() <= SKELETON_SIZE,
+        "Attempted to load skinned mesh \"{:?}\" with {} skin joints, however the maximum skeleton size is {SKELETON_SIZE}",
+        gltf_header.skins[0].name,
+        gltf_header.skins[0].joints.len()
+    );
     let animations = gltf_header.animations.iter().map(|anim| {
         let animation: Vec<AnimatedTarget<'_>> = anim
             .channels
