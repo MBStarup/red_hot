@@ -453,8 +453,8 @@ fn main() {
 
         let default_stage = renderer.register_stage(
             "Default".to_owned(),
-            include_shader!("vert.spv"),
-            include_shader!("frag.spv"),
+            include_shader!("main.vert"),
+            include_shader!("main.frag"),
             vk::PipelineRasterizationStateCreateInfo {
                 cull_mode: vk::CullModeFlags::BACK,
                 front_face: vk::FrontFace::COUNTER_CLOCKWISE,
@@ -544,8 +544,8 @@ fn main() {
 
         let other_default_stage = other_renderer.register_stage(
             "Default".to_owned(),
-            include_shader!("vert_basic.spv"),
-            include_shader!("frag.spv"),
+            include_shader!("basic.vert"),
+            include_shader!("main.frag"),
             vk::PipelineRasterizationStateCreateInfo {
                 cull_mode: vk::CullModeFlags::BACK,
                 front_face: vk::FrontFace::COUNTER_CLOCKWISE,

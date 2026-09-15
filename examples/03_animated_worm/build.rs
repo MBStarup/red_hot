@@ -2,7 +2,7 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
-use red_hot_build::{self as build, attempt, ShaderStage};
+use red_hot_build::{self as build, attempt};
 
 fn main() {
     attempt! {
@@ -13,7 +13,6 @@ fn main() {
         build::print_last_build_timestamp();
 
         fs::create_dir_all(&shader_dst)?;
-        build::build_shader(ShaderStage::Vert, shader_src.join("vert.glsl"), shader_dst.join("vert.spv"), [])?;
-        build::build_shader(ShaderStage::Frag, shader_src.join("frag.glsl"), shader_dst.join("frag.spv"), [])?;
+        build::build_shaders(&shader_src, &shader_dst)?;
     }
 }

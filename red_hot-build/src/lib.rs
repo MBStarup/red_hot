@@ -1,4 +1,9 @@
-use std::{ffi::OsStr, path::Path, process::Command};
+use std::{
+    ffi::OsStr,
+    fs::{self},
+    path::Path,
+    process::Command,
+};
 
 pub const RED: &str = "\x1b[91m";
 pub const GREEN: &str = "\x1b[92m";
@@ -131,12 +136,6 @@ pub fn rerun_if_changed<S: AsRef<Path>>(path: S) {
     println!("cargo::rerun-if-changed={}", path.as_ref().display()); // TODO: figure out how to detect of the files in dest_path!() are missing
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum ShaderStage {
-    Vert,
-    Frag,
-}
-
 #[derive(Clone, Debug)]
 pub struct ExitStatusError {
     command: String,
@@ -157,29 +156,57 @@ impl std::fmt::Display for ExitStatusError {
 
 impl std::error::Error for ExitStatusError {}
 
-pub fn build_shader<S: AsRef<OsStr>, I: IntoIterator<Item = S>>(stage: ShaderStage, src: S, dest: S, extra_args: I) -> Result<(), ExitStatusError> {
-    macro_rules! fshader_stage {
-        ($stage:literal) => {
-            concat!("-fshader-stage=", $stage)
-        };
-    }
+#[macro_export]
+macro_rules! build_shader {
+    //. Wrapper macro to automatically fill out empty extra_args, because it needs the annoying type annotations
+    ($src:expr, $dst:expr, $extra_args:expr) => {
+        $crate::build_shader($src, $dst, $extra_args)
+    };
+    ($src:expr, $dst:expr) => {
+        $crate::build_shader($src, $dst, [] as [&std::ffi::OsStr; 0])
+    };
+}
+
+pub fn build_shader(src: impl AsRef<OsStr>, dst: impl AsRef<OsStr>, extra_args: impl IntoIterator<Item: AsRef<OsStr>>) -> Result<(), Box<dyn std::error::Error>> {
+    let src = src.as_ref();
 
     let mut command = Command::new("glslc");
-    command.arg(match stage {
-        ShaderStage::Vert => fshader_stage!("vert"),
-        ShaderStage::Frag => fshader_stage!("frag"),
-    });
-    command.args(extra_args);
-    command.arg(src);
-    command.arg("-o");
-    command.arg(dest);
+    command.args(extra_args).arg(src).arg("-o").arg(dst);
 
-    let command_str = format!("{:?}", command);
-    let result = command.output().unwrap();
-    match result.status.success() {
-        true => Result::Ok(()),
-        false => Result::Err(ExitStatusError { command: command_str, exit_code: result.status.code().unwrap(), error_msg: String::from_utf8(result.stderr).unwrap() }),
+    let command_str = format!("{command:?}");
+    let output = command.output()?;
+
+    match output.status.success() {
+        true => Ok(()),
+        false => Err(Box::new(ExitStatusError {
+            command: command_str,
+            exit_code: output.status.code().unwrap_or(-1),
+            error_msg: String::from_utf8_lossy(&output.stderr).into_owned(),
+        })),
     }
+}
+
+pub fn build_shaders(shader_src: &Path, shader_dst: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    const SHADER_EXTENSIONS: [&str; 6] = [
+        // NOTE: Supported extensions from the glslc man page
+        "vert", "frag", "tesc", "tese", "geom", "comp",
+    ];
+    for entry in fs::read_dir(shader_src)? {
+        let path = entry?.path();
+
+        if path.is_file() {
+            if !path.extension().and_then(OsStr::to_str).is_some_and(|ext| SHADER_EXTENSIONS.contains(&ext)) {
+                // TODO[#pragma shader_stage]: We could support more extensions, like .glsl, and look for a '#pragma shader_stage()' to guess if it's a shader (or even just assume so and let glslc error if it can't find any), or even look for a valid (only preceded by preprocessor directives) '#pragma shader_stage()' in files with ANY extenion. Or maybe ask glslc to validate for us. But for now, forcing extension seems fine to me.
+                warn!("Skipping compilation of non-shader {}", path.display());
+                continue;
+            }
+
+            let output = shader_dst.join(path.file_name().unwrap());
+            build_shader!(&path, output)?;
+        }
+    }
+
+    Ok(())
 }
 
 //. Used so I can panic with my errors printing using Display, instead of Debug with the "?" operator
