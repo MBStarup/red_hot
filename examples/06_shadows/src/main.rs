@@ -26,7 +26,7 @@ use winit::{
 #[rustfmt::skip] #[rustfmt::skip] macro_rules! include_shader { ($path:literal) => { include_bytes!(concat!(env!("OUT_DIR"), "/shaders/", $path)) }; }
 
 fn texture_atlas_letter_coords(c: char) -> (i32, i32) {
-    const ROWS: &[&str] = &["abcdefghijklmnopqrst", "uvxyz1234567890+-?=!", ".:,; {[]}w*\\'^#~"];
+    const ROWS: &[&str] = &["abcdefghijklmnopqrst", "uvxyz1234567890+-?=!", ".:,; {[]}w*\\'^#~/"];
 
     let c = c.to_ascii_lowercase();
 
