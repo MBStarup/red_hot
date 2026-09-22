@@ -119,7 +119,7 @@ struct AnimationHandler<'a> {
 
 fn animations_from_gltf_data<'a>(gltf_header: &Gltf, gltf_buffer: &[u8]) -> Vec<Animation<'a>> {
     assert!(
-        gltf_header.skins[0].joints.len() <= SKELETON_SIZE,
+        gltf_header.skins.len() == 0 || gltf_header.skins[0].joints.len() <= SKELETON_SIZE,
         "Attempted to load skinned mesh \"{:?}\" with {} skin joints, however the maximum skeleton size is {SKELETON_SIZE}",
         gltf_header.skins[0].name,
         gltf_header.skins[0].joints.len()
@@ -494,11 +494,28 @@ fn main() {
             let index_accessor = &gltf_header.accessors[mesh.primitives[0].indices as usize];
 
             let index_data_bytes = gltf_header.access_buffer(&gltf_buffer, index_accessor);
-            let index_data_ptr = index_data_bytes.as_ptr() as *const u16;
-            let index_data_len = index_data_bytes.len() / (size_of::<u16>() * 1);
-            let index_data: &[u16] = unsafe { std::slice::from_raw_parts(index_data_ptr, index_data_len) };
 
-            Mesh { vertices: verts, indices: index_data.iter().map(|&e| e as u32).collect() }
+            // NOTE[Safety]: Bytes must be valid T's
+            unsafe fn as_t_slice<'a, T>(bytes: &'a [u8]) -> &'a [T] {
+                assert!(size_of::<T>() != 0);
+                assert!(bytes.len() % size_of::<T>() == 0);
+                assert!((bytes.as_ptr() as usize) % align_of::<T>() == 0);
+                std::slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / size_of::<T>())
+            }
+
+            let indices = unsafe {
+                // Note[Safety]: Only reinterprets as basic numeric types, also we trust the data in the file I guess
+                match index_accessor.component_type {
+                    glb::ComponentType::BYTE => as_t_slice::<i8>(index_data_bytes).iter().map(|&e| e as u32).collect(),
+                    glb::ComponentType::UNSIGNED_BYTE => as_t_slice::<u8>(index_data_bytes).iter().map(|&e| e as u32).collect(),
+                    glb::ComponentType::SHORT => as_t_slice::<i16>(index_data_bytes).iter().map(|&e| e as u32).collect(),
+                    glb::ComponentType::UNSIGNED_SHORT => as_t_slice::<u16>(index_data_bytes).iter().map(|&e| e as u32).collect(),
+                    glb::ComponentType::UNSIGNED_INT => as_t_slice::<u32>(index_data_bytes).iter().map(|&e| e as u32).collect(),
+                    glb::ComponentType::FLOAT => as_t_slice::<f32>(index_data_bytes).iter().map(|&e| e as u32).collect(),
+                }
+            };
+
+            Mesh { vertices: verts, indices }
         }
 
         let mut position = Vec3 { x: 0.0, y: 0.0, z: -10.0 };
@@ -619,6 +636,7 @@ fn main() {
             concat!(env!("CARGO_MANIFEST_DIR"), "/assets/013_Octogecko_Art.glb"),
             concat!(env!("CARGO_MANIFEST_DIR"), "/assets/021_Rhomgon_Art.glb"),
             concat!(env!("CARGO_MANIFEST_DIR"), "/assets/test3.glb"),
+            concat!(env!("CARGO_MANIFEST_DIR"), "/assets/Curtains.glb"),
         ];
         let mut file_data = glb_file_paths.map(|path| (path, read(path).unwrap()));
         let loaded_meshes: Vec<_> = file_data
