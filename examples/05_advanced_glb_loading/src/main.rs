@@ -750,7 +750,7 @@ fn main() {
                             KeyCode::KeyK => {
                                 let current_anim = animated_objects[selected_obj].1.current_animation;
                                 let anims_count = animated_objects[selected_obj].1.animations.len() as u8;
-                                let next_anim = current_anim.wrapping_sub(1) % anims_count;
+                                let next_anim = current_anim.wrapping_add(anims_count.wrapping_sub(1)) % anims_count;
                                 animated_objects[selected_obj].1.current_animation = next_anim;
                                 let anim_name = &animated_objects[selected_obj].1.animations[next_anim as usize].name;
                                 println!("Setting animation for obj: {selected_obj} to ({next_anim}), {anim_name}");
