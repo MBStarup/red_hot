@@ -1,6 +1,5 @@
 use std::{
-    ascii,
-    f32::consts::{PI, TAU},
+    f32::consts::TAU,
     fs::read,
     println,
     time::{SystemTime, UNIX_EPOCH},
@@ -33,7 +32,7 @@ fn texture_atlas_letter_coords(c: char) -> (i32, i32) {
     ROWS.iter()
         .enumerate()
         .find_map(|(row, chars)| chars.chars().position(|x| x == c).map(|col| (col as i32, row as i32)))
-        .unwrap_or_else(|| panic!("Unsupported character: {c:?}"))
+        .unwrap_or_else(|| texture_atlas_letter_coords('?'))
 }
 
 fn main() {
@@ -635,10 +634,11 @@ fn main() {
         let mut should_close = false;
         let mut a = 1.0;
         let mut b = 1.0;
-        let mut c = 0.05;
+        let mut c = 0.01;
         let light_proj_matrix = perspective_matrix(TAU / 4.0, 0.1, 200.0);
         let mut typing = false;
         let mut text_input = String::new();
+        let mut debug_line = "*loading...".to_owned();
         let mut debug = false;
 
         let mut focused = false;
@@ -877,6 +877,45 @@ fn main() {
                             texture_area: [98.0 / texture_atlas_bmp.width as f32, 98.0 / texture_atlas_bmp.height as f32],
                         }
                     }])
+                    .chain({
+                        let scale = c;
+                        let ratio = window_width as f32 / window_height as f32;
+
+                        let line_count = debug_line.matches('\n').count() + 1;
+
+                        debug_line
+                            .as_str()
+                            .split('\n')
+                            .enumerate()
+                            .flat_map(move |(line_index, line)| line.chars().enumerate().map(move |(col, char)| (col, line_index, char)))
+                            .map(move |(col, line_index, char)| {
+                                let (atlas_x, atlas_y) = texture_atlas_letter_coords(char);
+
+                                UiObjectUniform {
+                                    model_mat: Transform {
+                                        position: Vec3 { x: -1.0 + scale + col as f32 * scale * 2.0, y: 1.0 - scale * ratio - (line_count - 1 - line_index) as f32 * scale * ratio * 2.0, z: 0.0 },
+                                        rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU / 4.0),
+                                        scale: Vec3 { x: scale, y: scale, z: scale * ratio },
+                                    }
+                                    .get_matrix(),
+
+                                    color: Vec3 { x: 0.3, y: 0.2, z: 0.9 },
+
+                                    use_color: if "abcdefghijklmnopqrstuvwxyz0123456789+-?=!.:,;' ".contains(char.to_ascii_lowercase()) {
+                                        1
+                                    } else {
+                                        0
+                                    },
+
+                                    texture_offset: [
+                                        (1.0 + atlas_x as f32 * 99.0) / texture_atlas_bmp.width as f32,
+                                        (1.0 + atlas_y as f32 * 98.5) / texture_atlas_bmp.height as f32,
+                                    ],
+
+                                    texture_area: [98.0 / texture_atlas_bmp.width as f32, 98.0 / texture_atlas_bmp.height as f32],
+                                }
+                            })
+                    })
                     .collect();
 
                 renderer.render_stage(
@@ -902,7 +941,7 @@ fn main() {
             if frametime_circ_buffer[N_FRAMETIME - 1] != 0.0 {
                 //. Wait untill buffer is filled
                 let avg_frametime = frametime_circ_buffer.iter().sum::<f32>() / N_FRAMETIME as f32;
-                println!("fps: {}, {a} {b} {c}", 1.0 / avg_frametime);
+                debug_line = format!("t:{t:0.2}\na:{a:0.2}\nb:{b:0.2}\nc:{c:0.2}\n*fps:{:0.2}", 1.0 / avg_frametime);
             }
 
             dt *= a; //. Modifyer
