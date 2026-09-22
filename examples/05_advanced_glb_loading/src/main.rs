@@ -489,11 +489,29 @@ unsafe fn umain() {
         let index_accessor = &gltf_header.accessors[mesh.primitives[0].indices as usize];
 
         let index_data_bytes = gltf_header.access_buffer(&gltf_buffer, index_accessor);
-        let index_data_ptr = index_data_bytes.as_ptr() as *const u16;
-        let index_data_len = index_data_bytes.len() / (size_of::<u16>() * 1);
-        let index_data: &[u16] = unsafe { std::slice::from_raw_parts(index_data_ptr, index_data_len) };
+        // NOTE[Safety]: Bytes must be valid T's
+        unsafe fn as_t_slice<'a, T>(bytes: &'a [u8]) -> &'a [T] {
+            assert!(size_of::<T>() != 0);
+            assert!(bytes.len() % size_of::<T>() == 0);
+            assert!((bytes.as_ptr() as usize) % align_of::<T>() == 0);
+            std::slice::from_raw_parts(bytes.as_ptr() as *const T, bytes.len() / size_of::<T>())
+        }
 
-        Mesh { vertices: verts, indices: index_data.iter().map(|&e| e as u32).collect() }
+        let indices = unsafe {
+            #[cfg(target_endian = "big")]
+            compile_error!("Currently naively interprets indicies as target endiannes, however the glTF standard specifies little-endian, as such big-endian targets are not currently supported (you can fix this by manually parsing each index with from_le_bytes)");
+            // Note[Safety[as_t_slice]]: Only reinterprets as basic numeric types (for which all possible byte representatios are valid), also we trust the data in the file I guess
+            match &index_accessor.component_type {
+                glb::ComponentType::UNSIGNED_BYTE => as_t_slice::<u8>(index_data_bytes).iter().map(|&e| e as u32).collect(),
+                glb::ComponentType::UNSIGNED_SHORT => as_t_slice::<u16>(index_data_bytes).iter().map(|&e| e as u32).collect(),
+                glb::ComponentType::UNSIGNED_INT => as_t_slice::<u32>(index_data_bytes).iter().map(|&e| e as u32).collect(),
+                //. Rest is invalid according to the json schema (https://github.com/KhronosGroup/glTF/blob/main/specification/2.0/schema/mesh.primitive.schema.json (see the gltf_detailedDescription for indices))
+                //. and the github adoc (https://github.com/KhronosGroup/glTF/blob/main/specification/2.0/Specification.adoc#3722-vertex-attributes): "The accessor referenced by the indices property MUST have the "SCALAR" type and any of the uint8, uint16, or uint32 effective component types"
+                other => panic!("Invalid component type of the indices acessor: {other:?}\nExpected an unsigned scalar, i.e. UNSIGNED_BYTE, UNSIGNED_SHORT, or UNSIGNED_INT"),
+            }
+        };
+
+        Mesh { vertices: verts, indices }
     }
 
     let mut position = Vec3 { x: 0.0, y: 0.0, z: -10.0 };
@@ -606,7 +624,11 @@ unsafe fn umain() {
     );
 
     //# Load assets from files
-    let glb_file_paths = [concat!(env!("CARGO_MANIFEST_DIR"), "/assets/Glorp.glb"), concat!(env!("CARGO_MANIFEST_DIR"), "/assets/test.glb")];
+    let glb_file_paths = [
+        concat!(env!("CARGO_MANIFEST_DIR"), "/assets/Glorp.glb"),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/assets/test.glb"),
+        concat!(env!("CARGO_MANIFEST_DIR"), "/assets/Curtains.glb"),
+    ];
     let mut file_data = glb_file_paths.map(|path| (path, read(path).unwrap()));
     let loaded_meshes: Vec<_> = file_data
         .iter_mut()
