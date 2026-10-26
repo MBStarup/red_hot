@@ -641,7 +641,7 @@ unsafe fn umain() {
                 samples: vk::SampleCountFlags::TYPE_1,
                 load_op: vk::AttachmentLoadOp::CLEAR,
                 store_op: vk::AttachmentStoreOp::STORE,
-                final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                 ..Default::default()
             },
             vk::AttachmentDescription {
@@ -654,6 +654,85 @@ unsafe fn umain() {
         ],
         [
             vk::ClearValue { color: vk::ClearColorValue { float32: [0.05, 0.01, 0.02, 1.0] } }, //. was renderer.clear_color
+            vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } },
+        ],
+        &[*vk::SubpassDescription::builder()
+            .color_attachments(&[vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL }])
+            .depth_stencil_attachment(&vk::AttachmentReference { attachment: 1, layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL })
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)],
+        &[vk::SubpassDependency {
+            src_subpass: vk::SUBPASS_EXTERNAL,
+            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            ..Default::default()
+        }],
+        &[],
+    );
+
+    let debug_stage = renderer.register_stage(
+        "Debug_Meshes".to_owned(),
+        include_shader!("main.vert"),
+        include_shader!("green.frag"),
+        vk::PipelineRasterizationStateCreateInfo { cull_mode: vk::CullModeFlags::NONE, line_width: 1.0, polygon_mode: vk::PolygonMode::LINE, ..Default::default() },
+        vk::PipelineDepthStencilStateCreateInfo {
+            depth_test_enable: 1,
+            depth_write_enable: 1,
+            depth_compare_op: vk::CompareOp::LESS,
+            front: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+            back: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+            max_depth_bounds: 1.0,
+            ..Default::default()
+        },
+        *vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
+            blend_enable: 0,
+            src_color_blend_factor: vk::BlendFactor::SRC_COLOR,
+            dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_DST_COLOR,
+            color_blend_op: vk::BlendOp::ADD,
+            src_alpha_blend_factor: vk::BlendFactor::ZERO,
+            dst_alpha_blend_factor: vk::BlendFactor::ZERO,
+            alpha_blend_op: vk::BlendOp::ADD,
+            color_write_mask: vk::ColorComponentFlags::RGBA,
+        }]),
+        [
+            vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 },
+            vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 },
+            vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 },
+            //
+            // vk::VertexInputAttributeDescription { location: 3, binding: 0, format: vk::Format::R8G8B8A8_UINT, offset: 12 * 32 / 8 as u32 }, //. this doesn't work
+            vk::VertexInputAttributeDescription { location: 3, binding: 0, format: vk::Format::R8_UINT, offset: (12 * 32 + 0 * 8) / 8 as u32 },
+            vk::VertexInputAttributeDescription { location: 4, binding: 0, format: vk::Format::R8_UINT, offset: (12 * 32 + 1 * 8) / 8 as u32 },
+            vk::VertexInputAttributeDescription { location: 5, binding: 0, format: vk::Format::R8_UINT, offset: (12 * 32 + 2 * 8) / 8 as u32 },
+            vk::VertexInputAttributeDescription { location: 6, binding: 0, format: vk::Format::R8_UINT, offset: (12 * 32 + 3 * 8) / 8 as u32 },
+            //
+            // vk::VertexInputAttributeDescription { location:  7, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: (12 * 32 + 4 * 8) / 8 as u32 }, //. this only works for exactly 4, and then the shader has to specify vec4, instead of float[4]
+            vk::VertexInputAttributeDescription { location: 7, binding: 0, format: vk::Format::R32_SFLOAT, offset: (12 * 32 + 4 * 8 + 0 * 32) / 8 as u32 },
+            vk::VertexInputAttributeDescription { location: 8, binding: 0, format: vk::Format::R32_SFLOAT, offset: (12 * 32 + 4 * 8 + 1 * 32) / 8 as u32 },
+            vk::VertexInputAttributeDescription { location: 9, binding: 0, format: vk::Format::R32_SFLOAT, offset: (12 * 32 + 4 * 8 + 2 * 32) / 8 as u32 },
+            vk::VertexInputAttributeDescription { location: 10, binding: 0, format: vk::Format::R32_SFLOAT, offset: (12 * 32 + 4 * 8 + 3 * 32) / 8 as u32 },
+        ],
+        vec![red_hot::renderer::RedHotStageImage::SwapchainImage(), red_hot::renderer::RedHotStageImage::Image(depth_image)],
+        &[
+            vk::AttachmentDescription {
+                format: renderer.swapchain_image_format,
+                samples: vk::SampleCountFlags::TYPE_1,
+                load_op: vk::AttachmentLoadOp::LOAD,
+                initial_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                store_op: vk::AttachmentStoreOp::STORE,
+                final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                ..Default::default()
+            },
+            vk::AttachmentDescription {
+                format: vk::Format::D32_SFLOAT,
+                samples: vk::SampleCountFlags::TYPE_1,
+                load_op: vk::AttachmentLoadOp::CLEAR,
+                // initial_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL, // TODO: non-undefined initial layout is currently unsupported, as I do not create the barriers to transition them into the correct state before the renderpass begins. In this case it is fine too, as we clear it anyways
+                final_layout: vk::ImageLayout::DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+                ..Default::default()
+            },
+        ],
+        [
+            vk::ClearValue { color: vk::ClearColorValue { float32: [1.0, 0.0, 0.0, 0.0] } },
             vk::ClearValue { depth_stencil: vk::ClearDepthStencilValue { depth: 1.0, stencil: 0 } },
         ],
         &[*vk::SubpassDescription::builder()
@@ -863,6 +942,18 @@ unsafe fn umain() {
                                 model_mat: Transform { position: (camera_transform.position + ray_dir), rotation: Quaternion::<f32>::identity(), scale: Vec3::one() * 0.001 }.get_matrix(),
                                 skeleton: vec![Mat4x4::<f32>::unit(); SKELETON_SIZE].try_into().unwrap(),
                             }])
+                            .collect(),
+                    );
+                    // TODO[api]: As it stands now, I can't legally toggle the debug layer naively. The default stage has to leave the attachment in COLOR_ATTACHMENT_OPTIMAL for the debug stage, and the debug stage then transitions it to PRESENT_SRC_KHR.
+                    // TODO[api]: I'd either have to have two versions of the default stage and swap the entire chain of stages, add another stage afterwards to transition, or, the correct option, implement a way to setup memory barriers via the renderer and do the transition through there.
+                    renderer.render_stage(
+                        debug_stage,
+                        RenderStageUniform { view_mat: camera_transform.get_inverse_matrix(), proj_mat, light_dir, ambient_light: 0.0 },
+                        animated_objects.iter().map(|x| x.object.meshi).collect(),
+                        animated_objects
+                            .iter()
+                            .enumerate()
+                            .map(|(i, AnimatedObject { object, animation_handler: _ })| AnimatedObjectUniform { model_mat: object.transform.get_matrix(), skeleton: skeletons[i] })
                             .collect(),
                     );
                     renderer.render_commit();
