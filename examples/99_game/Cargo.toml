@@ -8,6 +8,7 @@ build = "build.rs"
 ash = { workspace = true }
 ash-window = { workspace = true }
 glb =  { workspace = true }
+img = { workspace = true }
 rand = { workspace = true }
 raw-window-handle = { workspace = true }
 red_hot = { workspace = true }

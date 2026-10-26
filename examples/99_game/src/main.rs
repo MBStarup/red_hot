@@ -9,6 +9,7 @@ use std::{
 
 use ash::vk;
 use glb::{AnimationTargetPath, Gltf, SamplerInterpolation};
+use img::parse_bmp;
 use rand::{RngExt, SeedableRng};
 
 use red_hot::{
@@ -379,6 +380,17 @@ fn screen_to_direction((x, y): (f32, f32), camera_transform: &Transform<f32>, in
 
 #[rustfmt::skip] macro_rules! include_shader { ($path:literal) => { include_bytes!(concat!(env!("OUT_DIR"), "/shaders/", $path)) }; }
 
+fn texture_atlas_letter_coords(c: char) -> (i32, i32) {
+    const ROWS: &[&str] = &["abcdefghijklmnopqrst", "uvxyz1234567890+-?=!", ".:,; {[]}w*\\'^#~/"];
+
+    let c = c.to_ascii_lowercase();
+
+    ROWS.iter()
+        .enumerate()
+        .find_map(|(row, chars)| chars.chars().position(|x| x == c).map(|col| (col as i32, row as i32)))
+        .unwrap_or_else(|| texture_atlas_letter_coords('?')) //. Default to '?' for unknown characters
+}
+
 #[rustfmt::skip] fn main() { unsafe { umain() } }
 unsafe fn umain() {
     assert_eq!(BONES_PER_VERT, 4, "VertexInputAttributeDescription not generalized");
@@ -420,6 +432,24 @@ unsafe fn umain() {
         color: [f32; 4],
         bones: [u8; BONES_PER_VERT],         //. Indexes of which bones affect this vertex
         bone_weights: [f32; BONES_PER_VERT], //. Weights of how much each of those bones affect
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Debug, Copy)]
+    #[repr(C)]
+    struct UiStageUniform {
+        is_typing: u32, //? Is u32 the smallest I'm allowed here?
+    }
+
+    #[allow(dead_code)]
+    #[derive(Clone, Debug, Copy)]
+    #[repr(C)]
+    struct UiObjectUniform {
+        model_mat: Mat4x4<f32>,
+        color: Vec3<f32>,
+        use_color: u32,
+        texture_offset: [f32; 2],
+        texture_area: [f32; 2],
     }
 
     fn animated_vertex_mesh_from_gltf_data<'a>((gltf_header, gltf_buffer): (&Gltf, &'a [u8])) -> Mesh<AnimatedVertex> {
@@ -554,6 +584,20 @@ unsafe fn umain() {
             AnimatedVertex { pos: [ 1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
             AnimatedVertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] }, //. FRONT (RIGHT/DOWN)
             AnimatedVertex { pos: [-1.0, -1.0,  1.0, 1.0], normal: [ 0.0,  0.0,  1.0, 1.0], color: [1.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+        ];
+        let indices = (0..vertices.len() as u32).collect();
+        Mesh::<AnimatedVertex> {vertices, indices}
+    };
+
+    #[rustfmt::skip]
+    let plane_mesh = {
+        let vertices = vec![
+            AnimatedVertex { pos: [-1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] }, //. UP (LEFT/FRONT)
+            AnimatedVertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [-1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [0.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
+            AnimatedVertex { pos: [ 1.0,  1.0, -1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 1.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] }, //. UP (RIGHT/BACK)
+            AnimatedVertex { pos: [ 1.0,  1.0,  1.0, 1.0], normal: [ 0.0,  1.0,  0.0, 1.0], color: [1.0, 0.0, 0.0, 1.0], bones: [0, 0, 0, 0], bone_weights: [1.0, 0.0, 0.0, 0.0] },
         ];
         let indices = (0..vertices.len() as u32).collect();
         Mesh::<AnimatedVertex> {vertices, indices}
@@ -719,7 +763,7 @@ unsafe fn umain() {
                 load_op: vk::AttachmentLoadOp::LOAD,
                 initial_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                 store_op: vk::AttachmentStoreOp::STORE,
-                final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+                final_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
                 ..Default::default()
             },
             vk::AttachmentDescription {
@@ -749,7 +793,109 @@ unsafe fn umain() {
         &[],
     );
 
+    let texture_atlas_file: &mut [u8] = &mut read(concat!(env!("CARGO_MANIFEST_DIR"), "/assets/text.bmp")).unwrap();
+    let texture_atlas_bmp = parse_bmp(texture_atlas_file);
+
+    let mut texture_atlas_rgba = Vec::with_capacity(texture_atlas_bmp.data.len() / 3 * 4);
+
+    for i in (0..texture_atlas_bmp.data.len()).step_by(3) {
+        texture_atlas_rgba.extend_from_slice(&[
+            texture_atlas_bmp.data[i + 0],
+            texture_atlas_bmp.data[i + 1],
+            texture_atlas_bmp.data[i + 2],
+            if texture_atlas_bmp.data[i + 0] == texture_atlas_bmp.data[i + 1] && texture_atlas_bmp.data[i + 1] == texture_atlas_bmp.data[i + 2] {
+                255 - texture_atlas_bmp.data[i + 0] //. Grey = transparent
+            } else {
+                255
+            },
+        ]);
+    }
+
+    let texture_atlas = renderer.register_image(RedHotImageCreateInfo {
+        size: ImageSize::Fixed(texture_atlas_bmp.width, texture_atlas_bmp.height),
+        format: vk::Format::R8G8B8A8_UNORM,
+        usage: vk::ImageUsageFlags::SAMPLED | vk::ImageUsageFlags::TRANSFER_DST,
+        memory_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+        image_aspect_mask: vk::ImageAspectFlags::COLOR,
+    });
+
+    println!("texture_atlas_bmp.data.len(): {}", texture_atlas_bmp.data.len());
+    renderer.write_to_image(red_hot::renderer::RedHotStageImage::Image(texture_atlas), &texture_atlas_rgba);
+
+    let ui_stage = renderer.register_stage(
+        "UI".to_owned(),
+        include_shader!("ui.vert"),
+        include_shader!("ui.frag"),
+        vk::PipelineRasterizationStateCreateInfo { cull_mode: vk::CullModeFlags::NONE, line_width: 1.0, polygon_mode: vk::PolygonMode::FILL, ..Default::default() },
+        vk::PipelineDepthStencilStateCreateInfo {
+            depth_test_enable: 0,
+            depth_write_enable: 0,
+            front: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+            back: vk::StencilOpState { fail_op: vk::StencilOp::KEEP, pass_op: vk::StencilOp::KEEP, depth_fail_op: vk::StencilOp::KEEP, compare_op: vk::CompareOp::ALWAYS, ..Default::default() },
+            max_depth_bounds: 1.0,
+            ..Default::default()
+        },
+        *vk::PipelineColorBlendStateCreateInfo::builder().logic_op(vk::LogicOp::CLEAR).attachments(&[vk::PipelineColorBlendAttachmentState {
+            blend_enable: 1,
+            src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
+            dst_color_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+            color_blend_op: vk::BlendOp::ADD,
+            src_alpha_blend_factor: vk::BlendFactor::ONE,
+            dst_alpha_blend_factor: vk::BlendFactor::ONE_MINUS_SRC_ALPHA,
+            alpha_blend_op: vk::BlendOp::ADD,
+            color_write_mask: vk::ColorComponentFlags::RGBA,
+        }]),
+        [
+            vk::VertexInputAttributeDescription { location: 0, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 0 as u32 },
+            vk::VertexInputAttributeDescription { location: 1, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 4 * 32 / 8 as u32 },
+            vk::VertexInputAttributeDescription { location: 2, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: 8 * 32 / 8 as u32 },
+            //
+            // vk::VertexInputAttributeDescription { location: 3, binding: 0, format: vk::Format::R8G8B8A8_UINT, offset: 12 * 32 / 8 as u32 }, //. this doesn't work
+            vk::VertexInputAttributeDescription { location: 3, binding: 0, format: vk::Format::R8_UINT, offset: (12 * 32 + 0 * 8) / 8 as u32 },
+            vk::VertexInputAttributeDescription { location: 4, binding: 0, format: vk::Format::R8_UINT, offset: (12 * 32 + 1 * 8) / 8 as u32 },
+            vk::VertexInputAttributeDescription { location: 5, binding: 0, format: vk::Format::R8_UINT, offset: (12 * 32 + 2 * 8) / 8 as u32 },
+            vk::VertexInputAttributeDescription { location: 6, binding: 0, format: vk::Format::R8_UINT, offset: (12 * 32 + 3 * 8) / 8 as u32 },
+            //
+            // vk::VertexInputAttributeDescription { location:  7, binding: 0, format: vk::Format::R32G32B32A32_SFLOAT, offset: (12 * 32 + 4 * 8) / 8 as u32 }, //. this only works for exactly 4, and then the shader has to specify vec4, instead of float[4]
+            vk::VertexInputAttributeDescription { location: 7, binding: 0, format: vk::Format::R32_SFLOAT, offset: (12 * 32 + 4 * 8 + 0 * 32) / 8 as u32 },
+            vk::VertexInputAttributeDescription { location: 8, binding: 0, format: vk::Format::R32_SFLOAT, offset: (12 * 32 + 4 * 8 + 1 * 32) / 8 as u32 },
+            vk::VertexInputAttributeDescription { location: 9, binding: 0, format: vk::Format::R32_SFLOAT, offset: (12 * 32 + 4 * 8 + 2 * 32) / 8 as u32 },
+            vk::VertexInputAttributeDescription { location: 10, binding: 0, format: vk::Format::R32_SFLOAT, offset: (12 * 32 + 4 * 8 + 3 * 32) / 8 as u32 },
+        ],
+        vec![red_hot::renderer::RedHotStageImage::SwapchainImage()],
+        &[vk::AttachmentDescription {
+            format: renderer.swapchain_image_format,
+            samples: vk::SampleCountFlags::TYPE_1,
+            load_op: vk::AttachmentLoadOp::LOAD,
+            initial_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+            store_op: vk::AttachmentStoreOp::STORE,
+            final_layout: vk::ImageLayout::PRESENT_SRC_KHR,
+            ..Default::default()
+        }],
+        [vk::ClearValue { color: vk::ClearColorValue { float32: [1.0, 0.0, 0.0, 0.0] } }],
+        &[*vk::SubpassDescription::builder()
+            .color_attachments(&[vk::AttachmentReference { attachment: 0, layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL }])
+            .pipeline_bind_point(vk::PipelineBindPoint::GRAPHICS)],
+        &[vk::SubpassDependency {
+            src_subpass: vk::SUBPASS_EXTERNAL,
+            src_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            dst_access_mask: vk::AccessFlags::COLOR_ATTACHMENT_READ | vk::AccessFlags::COLOR_ATTACHMENT_WRITE,
+            dst_stage_mask: vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT,
+            ..Default::default()
+        }],
+        &[(
+            &red_hot::renderer::RedHotStageImage::Image(texture_atlas),
+            *vk::SamplerCreateInfo::builder()
+                .compare_enable(false)
+                .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+                .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE),
+        )],
+    );
+
     let cube_meshi = renderer.register_mesh(cube_mesh);
+    // TODO[api]: Ideally the renderer is switched to not be generic over the vertex type and instead associates those to each stage, as the stages now define their own VertexAttributeDescriptions. This would allow us to not use AnimatedVertex with bones and weights for non-animated meshes like this.
+    let plane_meshi = renderer.register_mesh(plane_mesh);
 
     //# Load assets from files
     struct AssetManager<'a> {
@@ -837,7 +983,18 @@ unsafe fn umain() {
     let mut cursor = (0.0, 0.0);
     let mut dragging = false;
 
+    let mut typing = false;
+    let mut text_input = String::new();
+    let mut debug_line = "*loading...".to_owned();
+    let text_scale = 0.02;
+
     let mut focused = false;
+
+    let mut wireframe = false;
+
+    const N_FRAMETIME: usize = 120;
+    let mut frametime_circ_buffer = [0.0; N_FRAMETIME];
+    let mut frametime_index = 0;
 
     while !should_close {
         //. Update the objects
@@ -873,24 +1030,43 @@ unsafe fn umain() {
                     should_close = true; //. if we pressed close, close
                     *control_flow = ControlFlow::Exit;
                 },
-                Event::WindowEvent { event: WindowEvent::KeyboardInput { input: KeyboardInput { state: ElementState::Pressed, virtual_keycode: Some(keycode), .. }, .. }, .. } => match keycode {
-                    VirtualKeyCode::W => position += Vec3::<f32>::forward().rotate(camera_transform.rotation),
-                    VirtualKeyCode::S => position += Vec3::<f32>::backwards().rotate(camera_transform.rotation),
-                    VirtualKeyCode::A => position += Vec3::<f32>::left().rotate(camera_transform.rotation),
-                    VirtualKeyCode::D => position += Vec3::<f32>::right().rotate(camera_transform.rotation),
-                    VirtualKeyCode::Space => position += Vec3::<f32>::up(),
-                    VirtualKeyCode::LControl => position += Vec3::<f32>::down(),
-                    VirtualKeyCode::R => cam_pitch -= 0.3,
-                    VirtualKeyCode::F => cam_pitch += 0.3,
-                    VirtualKeyCode::Q => cam_yaw -= 0.3,
-                    VirtualKeyCode::E => cam_yaw += 0.3,
-                    VirtualKeyCode::Key1 => control -= 0.3,
-                    VirtualKeyCode::Key2 => control += 0.3,
-                    VirtualKeyCode::H => {},
-                    VirtualKeyCode::L => {},
-                    VirtualKeyCode::J => {},
-                    VirtualKeyCode::K => {},
-                    _ => (),
+                Event::WindowEvent { event: WindowEvent::ReceivedCharacter(text), .. } => {
+                    if typing && !text.is_control() {
+                        text_input.push(text);
+                    }
+                },
+                Event::WindowEvent { event: WindowEvent::KeyboardInput { input: KeyboardInput { state: ElementState::Pressed, virtual_keycode: Some(keycode), .. }, .. }, .. } => {
+                    if keycode == VirtualKeyCode::Return {
+                        //. Handle enter in either case
+                        typing = !typing;
+                    } else if typing {
+                        if keycode == VirtualKeyCode::Back {
+                            if !text_input.is_empty() {
+                                text_input.pop();
+                            }
+                        }
+                    } else {
+                        match keycode {
+                            VirtualKeyCode::W => position += Vec3::<f32>::forward().rotate(camera_transform.rotation),
+                            VirtualKeyCode::S => position += Vec3::<f32>::backwards().rotate(camera_transform.rotation),
+                            VirtualKeyCode::A => position += Vec3::<f32>::left().rotate(camera_transform.rotation),
+                            VirtualKeyCode::D => position += Vec3::<f32>::right().rotate(camera_transform.rotation),
+                            VirtualKeyCode::Space => position += Vec3::<f32>::up(),
+                            VirtualKeyCode::LControl => position += Vec3::<f32>::down(),
+                            VirtualKeyCode::R => cam_pitch -= 0.3,
+                            VirtualKeyCode::F => cam_pitch += 0.3,
+                            VirtualKeyCode::Q => cam_yaw -= 0.3,
+                            VirtualKeyCode::E => cam_yaw += 0.3,
+                            VirtualKeyCode::Key1 => control -= 0.3,
+                            VirtualKeyCode::Key2 => control += 0.3,
+                            VirtualKeyCode::H => {},
+                            VirtualKeyCode::L => {},
+                            VirtualKeyCode::J => {},
+                            VirtualKeyCode::K => {},
+                            VirtualKeyCode::Z => wireframe = !wireframe,
+                            _ => (),
+                        }
+                    }
                 },
                 Event::WindowEvent { event: WindowEvent::MouseInput { button: MouseButton::Middle, state, .. }, .. } => match state {
                     ElementState::Pressed => dragging = true,
@@ -944,18 +1120,119 @@ unsafe fn umain() {
                             }])
                             .collect(),
                     );
-                    // TODO[api]: As it stands now, I can't legally toggle the debug layer naively. The default stage has to leave the attachment in COLOR_ATTACHMENT_OPTIMAL for the debug stage, and the debug stage then transitions it to PRESENT_SRC_KHR.
-                    // TODO[api]: I'd either have to have two versions of the default stage and swap the entire chain of stages, add another stage afterwards to transition, or, the correct option, implement a way to setup memory barriers via the renderer and do the transition through there.
-                    renderer.render_stage(
-                        debug_stage,
-                        RenderStageUniform { view_mat: camera_transform.get_inverse_matrix(), proj_mat, light_dir, ambient_light: 0.0 },
-                        animated_objects.iter().map(|x| x.object.meshi).collect(),
-                        animated_objects
-                            .iter()
-                            .enumerate()
-                            .map(|(i, AnimatedObject { object, animation_handler: _ })| AnimatedObjectUniform { model_mat: object.transform.get_matrix(), skeleton: skeletons[i] })
-                            .collect(),
-                    );
+                    // TODO[api]: As it stands now, I can't legally toggle the last layer naively. The second last stage has to leave the attachment in COLOR_ATTACHMENT_OPTIMAL for the lats stage, and the last stage then transitions it to PRESENT_SRC_KHR.
+                    // TODO[api]: I'd either have to have two versions of previou stages and swap the entire chain of stages so that the last one uses the PRESENT_SRC_KHR version, or add another stage afterwards to transition, or, the correct option, implement a way to setup memory barriers via the renderer and do the transition through there.
+                    // TODO[api]: The UI stage now works as "another stage afterwards" solution (which means it can't be toggled, but whatever), which now handles the transision, so we can toggle the debug stage.
+                    if wireframe {
+                        renderer.render_stage(
+                            debug_stage,
+                            RenderStageUniform { view_mat: camera_transform.get_inverse_matrix(), proj_mat, light_dir, ambient_light: 0.0 },
+                            animated_objects.iter().map(|x| x.object.meshi).collect(),
+                            animated_objects
+                                .iter()
+                                .enumerate()
+                                .map(|(i, AnimatedObject { object, animation_handler: _ })| AnimatedObjectUniform { model_mat: object.transform.get_matrix(), skeleton: skeletons[i] })
+                                .collect(),
+                        );
+                    }
+
+                    //# UI
+                    let ui_objects: Vec<UiObjectUniform> = if text_input.is_empty() { "*ENTER*" } else { &text_input }
+                        .chars()
+                        .enumerate()
+                        .map(|(i, char)| {
+                            let (atlas_x, atlas_y) = texture_atlas_letter_coords(char);
+                            let scale = text_scale;
+                            let row_count = (1.0 / scale) as usize;
+                            let ratio = window_width as f32 / window_height as f32;
+
+                            UiObjectUniform {
+                                model_mat: Transform {
+                                    position: Vec3 { x: -1.0 + scale + (i % row_count) as f32 * scale * 2.0, y: -1.0 + scale * ratio + ((i / row_count) as f32 * scale * ratio * 2.0), z: 0.0 },
+                                    rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU / 4.0),
+                                    scale: Vec3 { x: scale, y: scale, z: scale * ratio },
+                                }
+                                .get_matrix(),
+
+                                color: Vec3 { x: 0.3, y: 0.2, z: 0.9 },
+
+                                use_color: if "abcdefghijklmnopqrstuvwxyz0123456789+-?=!.:,;' ".contains(char.to_ascii_lowercase()) {
+                                    1
+                                } else {
+                                    0
+                                },
+
+                                texture_offset: [
+                                    (1.0 + atlas_x as f32 * 99.0) / texture_atlas_bmp.width as f32,
+                                    (1.0 + atlas_y as f32 * 98.5) / texture_atlas_bmp.height as f32,
+                                ],
+
+                                texture_area: [98.0 / texture_atlas_bmp.width as f32, 98.0 / texture_atlas_bmp.height as f32],
+                            }
+                        })
+                        .chain([{
+                            let scale = text_scale;
+                            let ratio = window_width as f32 / window_height as f32;
+                            UiObjectUniform {
+                                model_mat: Transform {
+                                    position: Vec3 { x: 1.0 - scale, y: 1.0 - scale * ratio, z: 0.0 },
+                                    rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU / 4.0),
+                                    scale: Vec3 { x: scale, y: scale, z: scale * ratio },
+                                }
+                                .get_matrix(),
+
+                                color: Vec3 { x: 0.3, y: 0.2, z: 0.9 },
+                                use_color: 0,
+                                texture_offset: [
+                                    (1.0 + ((t / 0.1) as u32 % 8) as f32 * 99.0) / texture_atlas_bmp.width as f32,
+                                    (1.0 + 12 as f32 * 98.75) / texture_atlas_bmp.height as f32,
+                                ],
+
+                                texture_area: [98.0 / texture_atlas_bmp.width as f32, 98.0 / texture_atlas_bmp.height as f32],
+                            }
+                        }])
+                        .chain({
+                            let scale = text_scale;
+                            let ratio = window_width as f32 / window_height as f32;
+
+                            let line_count = debug_line.matches('\n').count() + 1;
+
+                            debug_line
+                                .as_str()
+                                .split('\n')
+                                .enumerate()
+                                .flat_map(move |(line_index, line)| line.chars().enumerate().map(move |(col, char)| (col, line_index, char)))
+                                .map(move |(col, line_index, char)| {
+                                    let (atlas_x, atlas_y) = texture_atlas_letter_coords(char);
+
+                                    UiObjectUniform {
+                                        model_mat: Transform {
+                                            position: Vec3 { x: -1.0 + scale + col as f32 * scale * 2.0, y: 1.0 - scale * ratio - (line_count - 1 - line_index) as f32 * scale * ratio * 2.0, z: 0.0 },
+                                            rotation: Quaternion::from_axis_rotation(Vec3::right(), TAU / 4.0),
+                                            scale: Vec3 { x: scale, y: scale, z: scale * ratio },
+                                        }
+                                        .get_matrix(),
+
+                                        color: Vec3 { x: 0.3, y: 0.2, z: 0.9 },
+
+                                        use_color: if "abcdefghijklmnopqrstuvwxyz0123456789+-?=!.:,;' ".contains(char.to_ascii_lowercase()) {
+                                            1
+                                        } else {
+                                            0
+                                        },
+
+                                        texture_offset: [
+                                            (1.0 + atlas_x as f32 * 99.0) / texture_atlas_bmp.width as f32,
+                                            (1.0 + atlas_y as f32 * 98.5) / texture_atlas_bmp.height as f32,
+                                        ],
+
+                                        texture_area: [98.0 / texture_atlas_bmp.width as f32, 98.0 / texture_atlas_bmp.height as f32],
+                                    }
+                                })
+                        })
+                        .collect();
+
+                    renderer.render_stage(ui_stage, UiStageUniform { is_typing: typing as u32 }, vec![plane_meshi; ui_objects.len()], ui_objects);
                     renderer.render_commit();
                 },
                 Event::RedrawEventsCleared => *control_flow = ControlFlow::Exit, //. "return"
@@ -966,6 +1243,14 @@ unsafe fn umain() {
         last_time = current_time;
         current_time = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
         dt = (current_time - last_time).as_secs_f32();
+        frametime_circ_buffer[frametime_index] = dt;
+        frametime_index = (frametime_index + 1) % N_FRAMETIME;
+        if frametime_circ_buffer[N_FRAMETIME - 1] != 0.0 {
+            //. Wait untill buffer is filled
+            let avg_frametime = frametime_circ_buffer.iter().sum::<f32>() / N_FRAMETIME as f32;
+            debug_line = format!("*t:{t:0.2}\n*fps:{:0.2}\n*Z: toggle wireframe", 1.0 / avg_frametime);
+        }
+
         t = t + dt;
     }
 
